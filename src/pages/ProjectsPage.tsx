@@ -8,16 +8,15 @@ import {
 import { projectFinancials } from '@/lib/finance';
 import {
   STATUS_LABELS, STATUS_COLORS, STATUS_DOT_COLORS,
-  type Project, type ProjectStatus,
+  type ManagerOption, type Project, type ProjectStatus,
 } from '@/types';
 import {
   getProjects, createProject, updateProject, deleteProject,
   getProjectActualHours, getProjectPlannedHours,
-  getPersons, getAccessibleProjects, getTransactionsByProject,
+  getManagerOptions, getAccessibleProjects, getTransactionsByProject,
   getAssignmentsByProject, getTimesheetsByProject,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
-import type { Person } from '@/types';
 import {
   Plus, FolderKanban, Search, Pencil, Trash2, Filter, X,
   DollarSign, TrendingUp, AlertCircle, Clock, Briefcase,
@@ -30,7 +29,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
   const [projects, setProjects] = useState<Project[]>(
     user ? getAccessibleProjects(user) : getProjects(),
   );
-  const persons = getPersons().filter((person) => person.is_active);
+  const managerOptions = getManagerOptions();
   const canManage = user?.role === 'admin' || user?.role === 'manager';
   const [search, setSearch] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState<ProjectStatus[]>([]);
@@ -192,7 +191,6 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
             const plannedMargin = calculatePlannedMargin(project.revenue, financials.budget);
             const plannedHours = getProjectPlannedHours(project.id);
             const actualHours = getProjectActualHours(project.id);
-            const manager = persons.find((person: Person) => person.id === project.manager_id);
             const myAssignment = getAssignmentsByProject(project.id).find(
               (assignment) => assignment.person_id === user?.person_id,
             );
@@ -250,7 +248,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-slate-500">项目经理</span>
-                        <span className="font-medium text-slate-900">{manager ? manager.name : '未指定'}</span>
+                        <span className="font-medium text-slate-900">{project.manager_name || '未指定'}</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-slate-500">项目周期</span>
@@ -278,7 +276,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
                       <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 我的工时 {formatHours(myActualHours)} / {formatHours(myPlannedHours)}</span>
                     )}
                     {canManage ? (
-                      <span>{manager ? manager.name : '未指定项目经理'}</span>
+                      <span>{project.manager_name || '未指定项目经理'}</span>
                     ) : (
                       <span>查看详情 →</span>
                     )}
@@ -302,7 +300,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
           open={modalOpen}
           onClose={() => setModalOpen(false)}
           project={editingProject}
-          persons={persons}
+          managerOptions={managerOptions}
           onSaved={() => { setModalOpen(false); reload(); }}
         />
       )}
@@ -331,18 +329,18 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
 }
 
 function ProjectFormModal({
-  open, onClose, project, persons, onSaved,
+  open, onClose, project, managerOptions, onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   project: Project | null;
-  persons: Person[];
+  managerOptions: ManagerOption[];
   onSaved: () => void;
 }) {
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
   const [status, setStatus] = useState<ProjectStatus>(project?.status || 'presales');
-  const [managerId, setManagerId] = useState(project?.manager_id || '');
+  const [managerId, setManagerId] = useState(project?.manager_user_id || '');
   const [client, setClient] = useState(project?.client || '');
   const [startDate, setStartDate] = useState(project?.start_date || '');
   const [endDate, setEndDate] = useState(project?.end_date || '');
@@ -361,7 +359,7 @@ function ProjectFormModal({
       name,
       description,
       status,
-      manager_id: managerId || null,
+      manager_user_id: managerId || null,
       client,
       start_date: startDate || null,
       end_date: endDate || null,
@@ -389,9 +387,15 @@ function ProjectFormModal({
           </Select>
           <Select label="项目经理" value={managerId} onChange={(e) => setManagerId(e.target.value)}>
             <option value="">未指定项目经理</option>
-            {persons.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+            {managerOptions.map((manager) => (
+              <option key={manager.id} value={manager.id}>{manager.full_name}</option>
+            ))}
+            {project?.manager_user_id && !managerOptions.some((manager) => manager.id === project.manager_user_id) && (
+              <option value={project.manager_user_id}>{project.manager_name || '当前项目经理'}（不可用）</option>
+            )}
           </Select>
         </div>
+        <p className="text-xs text-slate-400 -mt-2">仅显示已启用、角色为“项目经理”的用户账号。</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input label="开始日期" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           <Input label="结束日期" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />

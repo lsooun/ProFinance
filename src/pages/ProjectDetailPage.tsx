@@ -82,7 +82,6 @@ export default function ProjectDetailPage({
   const budgetUsed = financials.budgetUsed;
   const txIncome = financials.actualIncome;
   const txExpense = financials.actualExpense;
-  const manager = project.manager_id ? persons.find((person) => person.id === project.manager_id) : null;
   const plannedHours = getProjectPlannedHours(projectId);
   const actualHours = getProjectActualHours(projectId);
   const hoursUsed = plannedHours > 0 ? (actualHours / plannedHours) * 100 : 0;
@@ -178,7 +177,7 @@ export default function ProjectDetailPage({
             {project.description && <p className="text-sm text-slate-500 max-w-2xl">{project.description}</p>}
             <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-500">
               {project.client && <span className="flex items-center gap-1.5"><Target className="w-4 h-4" /> {project.client}</span>}
-              {manager && <span className="flex items-center gap-1.5"><User className="w-4 h-4" /> {manager.name}</span>}
+              {project.manager_name && <span className="flex items-center gap-1.5"><User className="w-4 h-4" /> {project.manager_name}</span>}
               <span className="flex items-center gap-1.5"><Calendar className="w-4 h-4" /> {formatDate(project.start_date)} → {formatDate(project.end_date)}</span>
             </div>
           </div>

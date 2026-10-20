@@ -14,12 +14,19 @@ export interface UserAccount {
 
 export type Profile = UserAccount;
 
+export interface ManagerOption {
+  id: string;
+  full_name: string;
+  role: UserRole;
+}
+
 export interface Project {
   id: string;
   name: string;
   description: string;
   status: ProjectStatus;
-  manager_id: string | null;
+  manager_user_id: string | null;
+  manager_name: string | null;
   client: string;
   start_date: string | null;
   end_date: string | null;
@@ -185,6 +192,7 @@ export interface BootstrapData {
   invoicePlans: InvoicePlan[];
   attachments: ProjectAttachment[];
   users: UserAccount[];
+  managerOptions: ManagerOption[];
   permissions: {
     canManage: boolean;
     isAdmin: boolean;

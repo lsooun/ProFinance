@@ -1,6 +1,7 @@
 import type {
   BootstrapData,
   InvoicePlan,
+  ManagerOption,
   Person,
   Project,
   ProjectAssignment,
@@ -58,7 +59,9 @@ export async function createUser(
     person_id: personId || null,
   });
   if (!result) return null;
-  data().users.push(result.user);
+  const store = data();
+  store.users.push(result.user);
+  syncManagerOption(result.user);
   return result.user;
 }
 
@@ -74,14 +77,49 @@ export async function updateUser(
   const index = store.users.findIndex((user) => user.id === id);
   if (index !== -1) store.users[index] = result.user;
   if (store.user.id === id) store.user = result.user;
+  store.projects = store.projects.map((project) =>
+    project.manager_user_id === id ? { ...project, manager_name: result.user.full_name } : project,
+  );
+  syncManagerOption(result.user);
   return result.user;
 }
 
 export async function deleteUser(id: string): Promise<boolean> {
   const result = await mutate<{ ok: boolean }>(`/api/users/${encodeURIComponent(id)}`, 'DELETE');
   if (!result?.ok) return false;
-  data().users = data().users.filter((user) => user.id !== id);
+  const store = data();
+  store.users = store.users.filter((user) => user.id !== id);
+  store.managerOptions = store.managerOptions.filter((option) => option.id !== id);
+  store.projects = store.projects.map((project) =>
+    project.manager_user_id === id
+      ? { ...project, manager_user_id: null, manager_name: null }
+      : project,
+  );
   return true;
+}
+
+export function getManagerOptions(): ManagerOption[] {
+  return [...data().managerOptions].sort((a, b) =>
+    a.full_name.localeCompare(b.full_name, 'zh-CN'),
+  );
+}
+
+function syncManagerOption(user: UserAccount): void {
+  const store = data();
+  const exists = store.managerOptions.some((option) => option.id === user.id);
+  const eligible = user.role === 'manager' && user.is_active;
+  if (eligible) {
+    const option = { id: user.id, full_name: user.full_name, role: user.role };
+    if (exists) {
+      store.managerOptions = store.managerOptions.map((item) =>
+        item.id === user.id ? option : item,
+      );
+    } else {
+      store.managerOptions.push(option);
+    }
+  } else if (exists) {
+    store.managerOptions = store.managerOptions.filter((option) => option.id !== user.id);
+  }
 }
 
 // ===== Projects =====
@@ -97,7 +135,7 @@ export function getProjectById(id: string): Project | null {
 }
 
 export async function createProject(
-  project: Omit<Project, 'id' | 'created_at' | 'updated_at'>,
+  project: Omit<Project, 'id' | 'created_at' | 'updated_at' | 'manager_name'>,
 ): Promise<Project | null> {
   const result = await mutate<Project>('/api/projects', 'POST', project);
   if (!result) return null;
@@ -227,9 +265,6 @@ export async function deletePerson(id: string): Promise<boolean> {
   store.persons = store.persons.filter((person) => person.id !== id);
   store.assignments = store.assignments.filter((assignment) => assignment.person_id !== id);
   store.timesheets = store.timesheets.filter((entry) => entry.person_id !== id);
-  store.projects = store.projects.map((project) =>
-    project.manager_id === id ? { ...project, manager_id: null } : project,
-  );
   return true;
 }
 

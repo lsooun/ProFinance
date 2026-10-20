@@ -86,6 +86,8 @@ test('登录失败返回 401，登录成功返回会话', async () => {
   assert.equal(bootstrap.data.users.length, 3);
   assert.deepEqual(bootstrap.data.permissions, { canManage: true, isAdmin: true });
   assert.equal('password_hash' in bootstrap.data.user, false);
+  assert.equal(bootstrap.data.managerOptions.length, 1);
+  assert.equal(bootstrap.data.managerOptions[0].full_name, '张伟');
 });
 
 test('员工只能拿到被分配项目与自己的工时', async () => {
@@ -101,6 +103,7 @@ test('员工只能拿到被分配项目与自己的工时', async () => {
   assert.equal(result.data.attachments.length, 0);
   assert.equal(result.data.users.length, 0);
   assert.equal(result.data.permissions.canManage, false);
+  assert.deepEqual(result.data.managerOptions, []);
   assert.ok(result.data.timesheets.length > 0);
   assert.ok(result.data.timesheets.every((entry) => entry.person_id === result.data.user.person_id));
   assert.ok(
@@ -119,7 +122,7 @@ test('员工不能创建项目、不能访问管理员用户接口', async () =>
       name: '未授权项目',
       status: 'presales',
       description: '',
-      manager_id: null,
+      manager_user_id: null,
       client: '',
       start_date: null,
       end_date: null,
@@ -197,6 +200,7 @@ test('员工只能填报自己的工时，且项目必须已分配', async () =>
 
 test('项目经理可以创建项目并查看全部数据，但不能管理用户', async () => {
   const before = await api('/api/bootstrap', { cookie: managerCookie });
+  const managerUserId = before.data.user.id;
   const created = await api('/api/projects', {
     method: 'POST',
     cookie: managerCookie,
@@ -204,7 +208,7 @@ test('项目经理可以创建项目并查看全部数据，但不能管理用�
       name: '测试项目',
       description: '集成测试创建',
       status: 'in_progress',
-      manager_id: null,
+      manager_user_id: managerUserId,
       client: '测试客户',
       start_date: '2026-10-01',
       end_date: '2026-12-31',
@@ -216,6 +220,8 @@ test('项目经理可以创建项目并查看全部数据，但不能管理用�
   });
   assert.equal(created.status, 201);
   assert.equal(created.data.name, '测试项目');
+  assert.equal(created.data.manager_user_id, managerUserId);
+  assert.equal(created.data.manager_name, '张伟');
 
   const after = await api('/api/bootstrap', { cookie: managerCookie });
   assert.equal(after.data.projects.length, before.data.projects.length + 1);
@@ -226,6 +232,34 @@ test('项目经理可以创建项目并查看全部数据，但不能管理用�
     cookie: managerCookie,
   });
   assert.equal(deleteResult.status, 200);
+});
+
+test('项目经理只能是角色为 manager 的真实用户', async () => {
+  const admin = await api('/api/bootstrap', { cookie: adminCookie });
+  const employee = admin.data.users.find((user) => user.role === 'employee');
+  const adminUser = admin.data.users.find((user) => user.role === 'admin');
+
+  for (const invalidId of [employee.id, adminUser.id]) {
+    const created = await api('/api/projects', {
+      method: 'POST',
+      cookie: managerCookie,
+      body: {
+        name: '非法负责人项目',
+        description: '',
+        status: 'presales',
+        manager_user_id: invalidId,
+        client: '',
+        start_date: null,
+        end_date: null,
+        budget_labor: 0,
+        budget_travel: 0,
+        budget_other: 0,
+        revenue: 0,
+      },
+    });
+    assert.equal(created.status, 400);
+    assert.match(created.data.error, /项目经理/);
+  }
 });
 
 test('最后一名管理员不能被降级、停用或删除', async () => {
@@ -267,6 +301,9 @@ test('管理员可以新增用户、重置密码，密码修改生效', async ()
     },
   });
   assert.equal(created.status, 201);
+
+  const optionsAfterCreate = await api('/api/bootstrap', { cookie: adminCookie });
+  assert.ok(optionsAfterCreate.data.managerOptions.some((option) => option.full_name === '测试用户'));
 
   const duplicate = await api('/api/users', {
     method: 'POST',
@@ -323,6 +360,9 @@ test('管理员可以新增用户、重置密码，密码修改生效', async ()
     cookie: adminCookie,
   });
   assert.equal(removed.status, 200);
+
+  const optionsAfterDelete = await api('/api/bootstrap', { cookie: adminCookie });
+  assert.ok(!optionsAfterDelete.data.managerOptions.some((option) => option.full_name === '测试用户'));
 });
 
 test('附件上传、下载、删除走服务端存储', async () => {

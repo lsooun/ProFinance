@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'presales' CHECK (status IN ('presales', 'in_progress', 'completed', 'cancelled')),
-  manager_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
+  manager_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   client TEXT NOT NULL DEFAULT '',
   start_date TEXT,
   end_date TEXT,
@@ -71,7 +71,6 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
-CREATE INDEX IF NOT EXISTS idx_projects_manager ON projects(manager_id);
 
 CREATE TABLE IF NOT EXISTS project_assignments (
   id TEXT PRIMARY KEY,
@@ -159,7 +158,7 @@ function seedDatabase(db) {
     'INSERT INTO users (id, email, password_hash, full_name, role, is_active, person_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   );
   const insertProject = db.prepare(
-    `INSERT INTO projects (id, name, description, status, manager_id, client, start_date, end_date,
+    `INSERT INTO projects (id, name, description, status, manager_user_id, client, start_date, end_date,
       budget_labor, budget_travel, budget_other, revenue, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
@@ -190,13 +189,14 @@ function seedDatabase(db) {
     persons.forEach((p, i) => insertPerson.run(personIds[i], p[0], p[1], p[2], p[3], p[4], p[5], now));
 
     // 三种演示账号，密码均为 123456
+    const managerUserId = randomUUID();
     insertUser.run(randomUUID(), 'admin@company.com', hashPassword('123456'), '管理员', 'admin', 1, null, now);
-    insertUser.run(randomUUID(), 'manager@company.com', hashPassword('123456'), '张伟', 'manager', 1, personIds[0], now);
+    insertUser.run(managerUserId, 'manager@company.com', hashPassword('123456'), '张伟', 'manager', 1, personIds[0], now);
     insertUser.run(randomUUID(), 'wang.lei@company.com', hashPassword('123456'), '王磊', 'employee', 1, personIds[2], now);
 
     insertProject.run(
       projectIds[0], '企业官网改版', '对公司官网进行整体视觉与交互升级',
-      'in_progress', personIds[0], '艾克米公司', monthDate(9, 15), monthDate(-2, 31),
+      'in_progress', managerUserId, '艾克米公司', monthDate(9, 15), monthDate(-2, 31),
       35000, 5000, 10000, 45000, now, now
     );
     insertProject.run(
@@ -206,7 +206,7 @@ function seedDatabase(db) {
     );
     insertProject.run(
       projectIds[2], '云平台迁移', '将本地基础设施迁移至云平台',
-      'completed', personIds[0], '数联数据', monthDate(13, 1), monthDate(1, 28),
+      'completed', managerUserId, '数联数据', monthDate(13, 1), monthDate(1, 28),
       50000, 10000, 20000, 85000, now, now
     );
 
@@ -263,12 +263,30 @@ function seedDatabase(db) {
   }
 }
 
+function migrateDatabase(db) {
+  const columns = db.prepare('PRAGMA table_info(projects)').all().map((column) => column.name);
+  if (!columns.includes('manager_user_id')) {
+    db.exec('ALTER TABLE projects ADD COLUMN manager_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+    db.exec(`
+      UPDATE projects
+      SET manager_user_id = (
+        SELECT users.id FROM users
+        WHERE users.person_id = projects.manager_id
+        LIMIT 1
+      )
+      WHERE manager_user_id IS NULL
+    `);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_projects_manager_user ON projects(manager_user_id)');
+}
+
 export function openDatabase(dbPath) {
   if (dbPath !== ':memory:') {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   }
   const db = new DatabaseSync(dbPath);
   db.exec(SCHEMA);
+  migrateDatabase(db);
   if (dbPath !== ':memory:') {
     db.exec('PRAGMA journal_mode = WAL;');
   }

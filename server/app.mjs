@@ -155,6 +155,17 @@ export function createApp({
     return row;
   };
 
+  const projectWithManager = (id) => {
+    const row = db.prepare(
+      `SELECT p.*, u.full_name AS manager_name
+       FROM projects p
+       LEFT JOIN users u ON u.id = p.manager_user_id
+       WHERE p.id = ?`
+    ).get(id);
+    if (!row) throw new HttpError(404, '项目不存在');
+    return row;
+  };
+
   const userById = (id) => {
     const row = db.prepare(
       'SELECT id, email, full_name, role, is_active, person_id, created_at FROM users WHERE id = ?'
@@ -247,7 +258,12 @@ export function createApp({
     const allPersons = db.prepare('SELECT * FROM persons ORDER BY name COLLATE NOCASE').all().map(mapPerson);
     const allAssignments = db.prepare('SELECT * FROM project_assignments').all();
     const allTimesheets = db.prepare('SELECT * FROM timesheets ORDER BY date DESC').all();
-    const allProjects = db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all();
+    const allProjects = db.prepare(
+      `SELECT p.*, u.full_name AS manager_name
+       FROM projects p
+       LEFT JOIN users u ON u.id = p.manager_user_id
+       ORDER BY p.created_at DESC`
+    ).all();
     const allTransactions = db.prepare('SELECT * FROM transactions ORDER BY transaction_date DESC').all();
     const allInvoices = db.prepare('SELECT * FROM invoice_plans ORDER BY date ASC').all();
     const allAttachments = db.prepare('SELECT * FROM attachments ORDER BY created_at DESC').all().map(mapAttachment);
@@ -267,7 +283,6 @@ export function createApp({
         .filter((a) => projectIds.has(a.project_id))
         .map((a) => (a.person_id === user.person_id ? a : { ...a, planned_hours: 0 }));
       const personIds = new Set(scopedAssignments.map((a) => a.person_id));
-      projects.forEach((p) => { if (p.manager_id) personIds.add(p.manager_id); });
       if (user.person_id) personIds.add(user.person_id);
       return {
         user,
@@ -281,6 +296,7 @@ export function createApp({
         invoicePlans: [],
         attachments: [],
         users: [],
+        managerOptions: [],
         permissions: { canManage: false, isAdmin: false },
       };
     }
@@ -292,6 +308,13 @@ export function createApp({
       ).all().map(publicUser);
     }
 
+    const managerOptions = db.prepare(
+      `SELECT id, full_name, role
+       FROM users
+       WHERE role = 'manager' AND is_active = 1
+       ORDER BY full_name COLLATE NOCASE`
+    ).all();
+
     return {
       user,
       projects: allProjects,
@@ -302,6 +325,7 @@ export function createApp({
       invoicePlans: allInvoices,
       attachments: allAttachments,
       users,
+      managerOptions,
       permissions: { canManage: true, isAdmin: user.role === 'admin' },
     };
   }
@@ -354,13 +378,16 @@ export function createApp({
       if (!PROJECT_STATUSES.includes(body.status)) throw new HttpError(400, '项目状态无效');
       out.status = body.status;
     }
-    if (has('manager_id')) {
-      if (body.manager_id) {
-        const person = db.prepare('SELECT id FROM persons WHERE id = ?').get(body.manager_id);
-        if (!person) throw new HttpError(400, '项目经理不存在');
-        out.manager_id = body.manager_id;
+    if (has('manager_user_id')) {
+      if (body.manager_user_id) {
+        const manager = db.prepare('SELECT id, role FROM users WHERE id = ?').get(body.manager_user_id);
+        if (!manager) throw new HttpError(400, '项目经理账号不存在');
+        if (manager.role !== 'manager') {
+          throw new HttpError(400, '项目经理必须是角色为“项目经理”的用户账号');
+        }
+        out.manager_user_id = body.manager_user_id;
       } else {
-        out.manager_id = null;
+        out.manager_user_id = null;
       }
     }
     if (has('client')) out.client = optionalString(body.client, { max: 200 });
@@ -591,16 +618,16 @@ export function createApp({
       const id = randomUUID();
       const now = nowISO();
       db.prepare(
-        `INSERT INTO projects (id, name, description, status, manager_id, client, start_date, end_date,
+        `INSERT INTO projects (id, name, description, status, manager_user_id, client, start_date, end_date,
           budget_labor, budget_travel, budget_other, revenue, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
-        id, fields.name, fields.description ?? '', fields.status ?? 'presales', fields.manager_id ?? null,
+        id, fields.name, fields.description ?? '', fields.status ?? 'presales', fields.manager_user_id ?? null,
         fields.client ?? '', fields.start_date ?? null, fields.end_date ?? null,
         fields.budget_labor ?? 0, fields.budget_travel ?? 0, fields.budget_other ?? 0,
         fields.revenue ?? 0, now, now
       );
-      sendJson(res, 201, rowById('projects', id));
+      sendJson(res, 201, projectWithManager(id));
       return true;
     }
 
@@ -611,7 +638,8 @@ export function createApp({
       rowById('projects', id);
       const fields = parseProject(await readJson(req), { partial: true });
       fields.updated_at = nowISO();
-      sendJson(res, 200, updateRow('projects', id, fields));
+      updateRow('projects', id, fields);
+      sendJson(res, 200, projectWithManager(id));
       return true;
     }
     if (match && method === 'DELETE') {
@@ -699,7 +727,6 @@ export function createApp({
       if (linkedUser) {
         throw new HttpError(400, `该人员已关联用户“${linkedUser.full_name}”，请先解除账号关联`);
       }
-      db.prepare('UPDATE projects SET manager_id = NULL WHERE manager_id = ?').run(id);
       db.prepare('DELETE FROM persons WHERE id = ?').run(id);
       sendJson(res, 200, { ok: true });
       return true;
