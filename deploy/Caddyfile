@@ -1,0 +1,16 @@
+# ProFinance 反向代理配置
+# APP_DOMAIN 由 docker-compose.yml 注入。
+# 生产环境：将域名 DNS 指向服务器，Caddy 会自动申请并续期 HTTPS 证书。
+# 本地测试：APP_DOMAIN=localhost 时 Caddy 使用内部 CA，浏览器会有证书提示。
+
+{$APP_DOMAIN:localhost} {
+    encode zstd gzip
+
+    reverse_proxy app:8787
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+}

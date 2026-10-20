@@ -66,7 +66,7 @@ npm run dev
 
 > 首次部署后请立即通过右上角菜单“修改密码”修改演示密码。
 
-### 生产运行
+### 生产运行（本机 Node）
 
 ```bash
 npm run build
@@ -77,10 +77,84 @@ npm start
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
+| `PF_HOST` | `127.0.0.1` | 监听地址；Docker/内网访问时设为 `0.0.0.0` |
 | `PF_PORT` / `PORT` | `8787` | 生产服务端口 |
 | `PF_DB_PATH` | `data/profinance.db` | SQLite 数据库路径 |
 | `PF_UPLOAD_DIR` | `data/uploads` | 附件目录 |
 | `PF_SECURE_COOKIE` | 未设置 | 设为 `1` 时 Cookie 增加 `Secure`（HTTPS 部署时启用） |
+
+## Docker 部署
+
+项目已包含 `Dockerfile`、`docker-compose.yml`、Caddy 反向代理配置和持久卷。  
+**不需要在宿主机安装 SQLite**，Node 镜像已内置 `node:sqlite`。
+
+### 方式一：本机/内网快速运行
+
+```bash
+docker compose up -d --build
+curl http://127.0.0.1:8787/api/health
+```
+
+- 访问：<http://127.0.0.1:8787/>
+- 应用端口仅绑定到宿主机 `127.0.0.1`，不直接暴露公网。
+- 数据保存在命名卷 `profinance-data` 中（数据库 + 附件）。
+- 默认 `PF_SECURE_COOKIE=0`，适合本地 HTTP 测试；公网 HTTPS 部署请设为 `1`。
+
+### 方式二：生产环境 + Caddy 自动 HTTPS
+
+1. 将域名 DNS 解析到服务器公网 IP，放行 `80/443` 端口。
+2. 准备配置：
+
+```bash
+cp deploy/production.env.example deploy/production.env
+vi deploy/production.env
+```
+
+至少修改：
+
+```dotenv
+APP_DOMAIN=profinance.example.com
+PF_SECURE_COOKIE=1
+```
+
+3. 启动应用与 Caddy：
+
+```bash
+docker compose --env-file deploy/production.env --profile proxy up -d --build
+docker compose ps
+docker compose logs -f app
+```
+
+Caddy 会自动申请并续期 HTTPS 证书；应用仅通过容器网络暴露给 Caddy。  
+反向代理配置见 [deploy/Caddyfile](deploy/Caddyfile)。
+
+> 如果已经有 Nginx / 云负载均衡，只需运行 `docker compose up -d app`，将上游指向 `127.0.0.1:8787`，并把 `PF_SECURE_COOKIE` 设为 `1`。
+
+### 数据卷与备份
+
+```bash
+# 查看卷
+docker volume inspect profinance-data
+
+# 停止应用后做一致性备份
+docker compose stop app
+mkdir -p backups
+docker run --rm \
+  -v profinance-data:/data \
+  -v "$PWD/backups":/backup \
+  alpine sh -c 'tar czf /backup/profinance-$(date +%F-%H%M).tgz -C /data .'
+docker compose start app
+```
+
+恢复时把备份包解压回 `profinance-data` 卷即可。`docker compose down` 会保留数据卷；`docker compose down -v` 会**删除数据库和附件**，请谨慎使用。
+
+### 镜像与容器说明
+
+- 构建阶段安装依赖并执行 `npm run build`，运行阶段只包含 `dist/`、`server/` 和 Node 运行时。
+- 容器以非 root 用户 `node` 运行。
+- 应用在容器内监听 `0.0.0.0:8787`，宿主机端口默认只映射到 `127.0.0.1`。
+- 健康检查：`/api/health`。
+- 首次启动自动建库并写入中文演示数据。
 
 ## 权限模型
 
@@ -129,20 +203,25 @@ npm run dev
 ## 目录结构
 
 ```
+Dockerfile                 多阶段生产镜像
+docker-compose.yml         应用 + 可选 Caddy 反向代理
+deploy/
+  Caddyfile                Caddy 反向代理配置
+  production.env.example   生产环境变量示例
 server/
-  app.mjs          API 路由、认证、权限、业务校验
-  db.mjs           SQLite 表结构、密码哈希、中文种子数据
-  index.mjs        生产静态服务 + API 服务
-  app.test.mjs     后端集成测试
+  app.mjs                  API 路由、认证、权限、业务校验
+  db.mjs                   SQLite 表结构、密码哈希、中文种子数据
+  index.mjs                生产静态服务 + API 服务
+  app.test.mjs             后端集成测试
 scripts/
-  dev.mjs          同时启动 API 与 Vite
-  reset-db.mjs     清空本地数据
+  dev.mjs                  同时启动 API 与 Vite
+  reset-db.mjs             清空本地数据
 src/
-  components/      布局、通用 UI、Toast
-  context/         认证上下文
-  lib/             API、数据缓存、路由、财务计算、CSV、格式化
-  pages/           各业务页面
-  types/           类型与中文枚举
+  components/              布局、通用 UI、Toast
+  context/                 认证上下文
+  lib/                     API、数据缓存、路由、财务计算、CSV、格式化
+  pages/                   各业务页面
+  types/                   类型与中文枚举
 ```
 
 ## 安全说明
@@ -151,7 +230,9 @@ src/
 - 会话使用 HttpOnly + SameSite=Lax Cookie，前端无法读取。
 - 所有写操作在服务端做角色校验；员工访问非分配项目、他人工时、财务数据都会被拒绝。
 - 附件限制为 `.xlsx/.xls`、单文件 5 MB，文件保存在磁盘上。
-- 本地 HTTP 环境未启用 `Secure` Cookie；上线请使用 HTTPS 并设置 `PF_SECURE_COOKIE=1`，同时建议加反向代理、限流和定期备份。
+- 本地 HTTP 环境未启用 `Secure` Cookie；上线请使用 HTTPS 并设置 `PF_SECURE_COOKIE=1`。
+- Docker 镜像以非 root 用户运行，应用端口仅绑定宿主机回环地址，由 Caddy/Nginx 对外提供 HTTPS；建议再加限流、防火墙和定期备份。
+- SQLite 适合单实例部署；如需多副本横向扩容，应迁移到 PostgreSQL 等网络数据库。
 
 ## 说明
 

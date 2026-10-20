@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createApp } from './app.mjs';
 
 const port = Number(process.env.PF_PORT || process.env.PORT || 8787);
+const host = process.env.PF_HOST || '127.0.0.1';
 const dbPath = process.env.PF_DB_PATH || path.resolve('data/profinance.db');
 const uploadDir = process.env.PF_UPLOAD_DIR || path.resolve('data/uploads');
 const distDir = path.resolve('dist');
@@ -92,8 +93,9 @@ const server = createServer((req, res) => {
   serveStatic(req, res);
 });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`ProFinance 已启动：http://127.0.0.1:${port}`);
+server.listen(port, host, () => {
+  const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+  console.log(`ProFinance 已启动：http://${displayHost}:${port}（监听 ${host}:${port}）`);
   console.log(`数据文件：${dbPath}`);
   console.log(`附件目录：${uploadDir}`);
 });

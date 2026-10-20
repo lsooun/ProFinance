@@ -1,0 +1,54 @@
+name: profinance
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: profinance:local
+    restart: unless-stopped
+    init: true
+    environment:
+      PF_HOST: "0.0.0.0"
+      PF_PORT: "8787"
+      PF_DB_PATH: /app/data/profinance.db
+      PF_UPLOAD_DIR: /app/data/uploads
+      PF_SECURE_COOKIE: "${PF_SECURE_COOKIE:-0}"
+    volumes:
+      - profinance-data:/app/data
+    ports:
+      - "127.0.0.1:${APP_PORT:-8787}:8787"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # 可选的生产反向代理：docker compose --profile proxy up -d --build
+  caddy:
+    profiles: ["proxy"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:-localhost}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  profinance-data:
+    name: profinance-data
+  caddy-data:
+  caddy-config:

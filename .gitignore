@@ -61,3 +61,8 @@ Desktop.ini
 # ===== Supabase CLI 本地缓存 =====
 supabase/.temp/
 supabase/.branches/
+
+# ===== Docker 本地配置 / 备份 =====
+/deploy/production.env
+/backups/
+docker-compose.override.yml
