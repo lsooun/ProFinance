@@ -397,14 +397,16 @@ function TimesheetImportModal({
   }
 
   function downloadTemplate() {
-    downloadCSVTemplate(
-      TEMPLATE_HEADERS,
-      'timesheet-template.csv',
-      [
-        ['2026-01-20', '张伟', '企业官网改版', '8', '项目启动与规划'],
-        ['2026-01-20', '王磊', '企业官网改版', '6', '后端接口搭建'],
-      ],
-    );
+    const samplePerson = persons.find((person) => person.is_active)?.name || '';
+    const sampleProject = projects[0]?.name || '';
+    const sampleDate = new Date().toISOString().slice(0, 10);
+    const sampleRows = samplePerson && sampleProject
+      ? [
+          [sampleDate, samplePerson, sampleProject, '8', '示例工作内容'],
+          [sampleDate, samplePerson, sampleProject, '4', '示例工作内容'],
+        ]
+      : [];
+    downloadCSVTemplate(TEMPLATE_HEADERS, 'timesheet-template.csv', sampleRows);
   }
 
   function reset() {

@@ -416,12 +416,14 @@ function TransactionImportModal({
   }
 
   function downloadTemplate() {
+    const sampleProject = projects[0]?.name || '';
+    const sampleDate = new Date().toISOString().slice(0, 10);
     downloadCSVTemplate(
       TEMPLATE_HEADERS,
       'transactions-template.csv',
       [
-        ['收入', '2026-01-15', '咨询服务', '第一阶段回款', '25000', '企业官网改版'],
-        ['支出', '2026-01-20', '工资', '开发人员工资', '15000', '企业官网改版'],
+        ['收入', sampleDate, INCOME_CATEGORIES[0], '示例收入', '25000', sampleProject],
+        ['支出', sampleDate, EXPENSE_CATEGORIES[0], '示例支出', '15000', sampleProject],
       ],
     );
   }
