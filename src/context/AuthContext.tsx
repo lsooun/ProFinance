@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { UserAccount } from '@/types';
 import { apiRequest, errorMessage } from '@/lib/api';
-import { clearCache, loadBootstrap } from '@/lib/storage';
+import { clearCache, loadBootstrap, updateOwnProfile } from '@/lib/storage';
 import { notify } from '@/lib/notify';
 import { AuthContext } from '@/context/auth-context';
 
@@ -67,6 +67,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateProfile = useCallback(async (fullName: string, email: string) => {
+    try {
+      const updated = await updateOwnProfile(fullName, email);
+      if (!updated) return { error: '资料更新失败' };
+      setUser(updated);
+      notify('个人资料已更新', 'success');
+      return { error: null };
+    } catch (error) {
+      return { error: errorMessage(error, '资料更新失败') };
+    }
+  }, []);
+
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
     try {
       await apiRequest('/api/auth/password', {
@@ -82,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, profile: user, loading, signIn, signOut, refreshProfile, changePassword }}
+      value={{ user, profile: user, loading, signIn, signOut, refreshProfile, updateProfile, changePassword }}
     >
       {children}
     </AuthContext.Provider>

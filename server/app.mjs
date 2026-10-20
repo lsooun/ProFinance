@@ -13,6 +13,7 @@ const PERSON_ROLES = ['project_manager', 'consultant', 'developer', 'designer', 
 const USER_ROLES = ['admin', 'manager', 'employee'];
 const TRANSACTION_TYPES = ['income', 'expense'];
 const INVOICE_STATUSES = ['unbilled', 'invoiced', 'collected'];
+const BUDGET_CATEGORIES = ['labor', 'travel', 'other'];
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -351,6 +352,42 @@ export function createApp({
     sendJson(res, 200, { ok: true });
   }
 
+  async function updateOwnProfile(req, res) {
+    const user = requireAuth(req);
+    const body = await readJson(req);
+    const fields = {};
+    if (body.full_name !== undefined) fields.full_name = requiredString(body.full_name, '姓名', { max: 80 });
+    if (body.email !== undefined) {
+      const email = requiredString(body.email, '邮箱', { max: 200 }).toLowerCase();
+      if (!validEmail(email)) throw new HttpError(400, '邮箱格式不正确');
+      const conflict = db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id <> ?').get(email, user.id);
+      if (conflict) throw new HttpError(400, '该邮箱已被使用');
+      fields.email = email;
+    }
+    if (Object.keys(fields).length === 0) throw new HttpError(400, '没有需要更新的内容');
+    const updated = updateRow('users', user.id, fields);
+    sendJson(res, 200, { user: publicUser(updated) });
+  }
+
+  async function resetPasswordWithToken(req, res) {
+    const body = await readJson(req);
+    const token = typeof body.token === 'string' ? body.token : '';
+    const newPassword = typeof body.new_password === 'string' ? body.new_password : '';
+    if (!token || newPassword.length < 6) throw new HttpError(400, '重置链接无效或密码不符合要求');
+    const reset = db.prepare(
+      'SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL'
+    ).get(sha256(token));
+    if (!reset || new Date(reset.expires_at).getTime() < Date.now()) {
+      throw new HttpError(400, '重置链接无效或已过期');
+    }
+    const account = db.prepare('SELECT * FROM users WHERE id = ?').get(reset.user_id);
+    if (!account || !account.is_active) throw new HttpError(400, '重置链接无效或账号已停用');
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), account.id);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(account.id);
+    db.prepare('UPDATE password_resets SET used_at = ? WHERE token_hash = ?').run(nowISO(), sha256(token));
+    sendJson(res, 200, { ok: true });
+  }
+
   async function changeOwnPassword(req, res) {
     const user = requireAuth(req);
     const body = await readJson(req);
@@ -419,7 +456,37 @@ export function createApp({
         out.project_id = null;
       }
     }
+    if (body.budget_category !== undefined) {
+      if (body.budget_category !== null && !BUDGET_CATEGORIES.includes(body.budget_category)) {
+        throw new HttpError(400, '预算分类无效');
+      }
+      out.budget_category = body.budget_category ?? null;
+    }
+    if (body.invoice_plan_id !== undefined) {
+      out.invoice_plan_id = body.invoice_plan_id || null;
+    }
     return out;
+  }
+
+  function defaultBudgetCategory(category) {
+    if (category === '工资' || category === 'Salary') return 'labor';
+    if (category === '差旅' || category === 'Travel') return 'travel';
+    return 'other';
+  }
+
+  function normalizeTransactionLinks({ type, projectId, category, budgetCategory, invoicePlanId }) {
+    if (type === 'income') {
+      if (!invoicePlanId) return { budget_category: null, invoice_plan_id: null };
+      if (!projectId) throw new HttpError(400, '关联回款节点前请先选择项目');
+      const plan = db.prepare('SELECT id, project_id FROM invoice_plans WHERE id = ?').get(invoicePlanId);
+      if (!plan) throw new HttpError(400, '关联的回款节点不存在');
+      if (plan.project_id !== projectId) throw new HttpError(400, '回款节点与收入所属项目不一致');
+      return { budget_category: null, invoice_plan_id: invoicePlanId };
+    }
+    if (invoicePlanId) throw new HttpError(400, '只有收入记录可以关联回款节点');
+    const budget = budgetCategory || defaultBudgetCategory(category);
+    if (!BUDGET_CATEGORIES.includes(budget)) throw new HttpError(400, '预算分类无效');
+    return { budget_category: budget, invoice_plan_id: null };
   }
 
   function parsePerson(body, { partial = false } = {}) {
@@ -496,8 +563,17 @@ export function createApp({
       await changeOwnPassword(req, res);
       return true;
     }
+    if (pathname === '/api/auth/reset-password' && method === 'POST') {
+      await resetPasswordWithToken(req, res);
+      return true;
+    }
 
     const user = requireAuth(req);
+
+    if (pathname === '/api/auth/profile' && method === 'PATCH') {
+      await updateOwnProfile(req, res);
+      return true;
+    }
 
     if (pathname === '/api/bootstrap' && method === 'GET') {
       sendJson(res, 200, buildBootstrap(user));
@@ -541,7 +617,22 @@ export function createApp({
       return true;
     }
 
-    let match = pathname.match(/^\/api\/users\/([^/]+)$/);
+    let match = pathname.match(/^\/api\/users\/([^/]+)\/reset-token$/);
+    if (match && method === 'POST') {
+      requireAdmin(user);
+      const target = userById(match[1]);
+      const token = randomBytes(32).toString('base64url');
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      db.prepare('DELETE FROM password_resets WHERE expires_at < ? OR used_at IS NOT NULL').run(nowISO());
+      db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(target.id);
+      db.prepare(
+        'INSERT INTO password_resets (token_hash, user_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)'
+      ).run(sha256(token), target.id, expiresAt, nowISO());
+      sendJson(res, 201, { token, expires_at: expiresAt });
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/users\/([^/]+)$/);
     if (match && method === 'PATCH') {
       requireAdmin(user);
       const id = match[1];
@@ -649,7 +740,7 @@ export function createApp({
       const files = db.prepare('SELECT storage_path FROM attachments WHERE project_id = ?').all(id);
       db.exec('BEGIN');
       try {
-        db.prepare('UPDATE transactions SET project_id = NULL WHERE project_id = ?').run(id);
+        db.prepare('UPDATE transactions SET project_id = NULL, invoice_plan_id = NULL WHERE project_id = ?').run(id);
         db.prepare('DELETE FROM projects WHERE id = ?').run(id);
         db.exec('COMMIT');
       } catch (err) {
@@ -667,13 +758,22 @@ export function createApp({
       requireManager(user);
       const body = await readJson(req);
       const fields = parseTransaction(body);
+      const normalized = normalizeTransactionLinks({
+        type: fields.type,
+        projectId: fields.project_id ?? null,
+        category: fields.category,
+        budgetCategory: fields.budget_category,
+        invoicePlanId: fields.invoice_plan_id,
+      });
+      fields.budget_category = normalized.budget_category;
+      fields.invoice_plan_id = normalized.invoice_plan_id;
       const id = randomUUID();
       db.prepare(
-        `INSERT INTO transactions (id, project_id, type, category, description, amount, transaction_date, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO transactions (id, project_id, type, category, description, amount, transaction_date, created_by, budget_category, invoice_plan_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id, fields.project_id ?? null, fields.type, fields.category, fields.description ?? '',
-        fields.amount, fields.transaction_date, user.id, nowISO()
+        fields.amount, fields.transaction_date, user.id, fields.budget_category, fields.invoice_plan_id, nowISO()
       );
       sendJson(res, 201, rowById('transactions', id));
       return true;
@@ -683,8 +783,39 @@ export function createApp({
     if (match && method === 'PATCH') {
       requireManager(user);
       const id = match[1];
-      rowById('transactions', id);
-      sendJson(res, 200, updateRow('transactions', id, parseTransaction(await readJson(req), { partial: true })));
+      const existing = rowById('transactions', id);
+      const fields = parseTransaction(await readJson(req), { partial: true });
+      const nextType = fields.type ?? existing.type;
+      const nextProjectId = fields.project_id !== undefined ? fields.project_id : existing.project_id;
+      const nextCategory = fields.category ?? existing.category;
+      let nextBudget = fields.budget_category !== undefined ? fields.budget_category : existing.budget_category;
+      let nextInvoice = fields.invoice_plan_id !== undefined ? fields.invoice_plan_id : existing.invoice_plan_id;
+
+      if (fields.project_id !== undefined && fields.project_id !== existing.project_id && fields.invoice_plan_id === undefined) {
+        nextInvoice = null;
+      }
+      if (fields.type !== undefined && fields.type !== existing.type) {
+        if (nextType === 'income') {
+          nextBudget = null;
+          if (fields.invoice_plan_id === undefined) nextInvoice = null;
+        } else {
+          nextInvoice = null;
+        }
+      }
+      if (fields.category !== undefined && fields.budget_category === undefined && nextType === 'expense') {
+        nextBudget = defaultBudgetCategory(nextCategory);
+      }
+
+      const normalized = normalizeTransactionLinks({
+        type: nextType,
+        projectId: nextProjectId,
+        category: nextCategory,
+        budgetCategory: nextBudget,
+        invoicePlanId: nextInvoice,
+      });
+      fields.budget_category = normalized.budget_category;
+      fields.invoice_plan_id = normalized.invoice_plan_id;
+      sendJson(res, 200, updateRow('transactions', id, fields));
       return true;
     }
     if (match && method === 'DELETE') {
@@ -753,6 +884,15 @@ export function createApp({
     }
 
     match = pathname.match(/^\/api\/assignments\/([^/]+)$/);
+    if (match && method === 'PATCH') {
+      requireManager(user);
+      const id = match[1];
+      rowById('project_assignments', id);
+      const body = await readJson(req);
+      const hours = requiredNumber(body.planned_hours, '计划工时', { min: 1, max: 100000 });
+      sendJson(res, 200, updateRow('project_assignments', id, { planned_hours: hours }));
+      return true;
+    }
     if (match && method === 'DELETE') {
       requireManager(user);
       const id = match[1];
@@ -852,6 +992,7 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       rowById('invoice_plans', id);
+      db.prepare('UPDATE transactions SET invoice_plan_id = NULL WHERE invoice_plan_id = ?').run(id);
       db.prepare('DELETE FROM invoice_plans WHERE id = ?').run(id);
       sendJson(res, 200, { ok: true });
       return true;

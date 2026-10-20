@@ -262,6 +262,185 @@ test('项目经理只能是角色为 manager 的真实用户', async () => {
   }
 });
 
+test('项目经理可以修改成员计划工时，员工不能', async () => {
+  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const assignment = bootstrap.data.assignments[0];
+
+  const updated = await api(`/api/assignments/${assignment.id}`, {
+    method: 'PATCH',
+    cookie: managerCookie,
+    body: { planned_hours: 123 },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.planned_hours, 123);
+
+  const forbidden = await api(`/api/assignments/${assignment.id}`, {
+    method: 'PATCH',
+    cookie: employeeCookie,
+    body: { planned_hours: 99 },
+  });
+  assert.equal(forbidden.status, 403);
+
+  await api(`/api/assignments/${assignment.id}`, {
+    method: 'PATCH',
+    cookie: managerCookie,
+    body: { planned_hours: assignment.planned_hours },
+  });
+});
+
+test('回款节点可以编辑日期、节点和比例', async () => {
+  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const plan = bootstrap.data.invoicePlans.find((item) => item.percentage === 40);
+  assert.ok(plan);
+
+  const updated = await api(`/api/invoices/${plan.id}`, {
+    method: 'PATCH',
+    cookie: managerCookie,
+    body: { date: '2026-10-06', stage: '编辑后的回款节点', percentage: 39 },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.date, '2026-10-06');
+  assert.equal(updated.data.stage, '编辑后的回款节点');
+  assert.equal(updated.data.percentage, 39);
+
+  const restored = await api(`/api/invoices/${plan.id}`, {
+    method: 'PATCH',
+    cookie: managerCookie,
+    body: { date: plan.date, stage: plan.stage, percentage: plan.percentage },
+  });
+  assert.equal(restored.status, 200);
+});
+
+test('用户可以修改自己的资料，管理员可生成一次性重置链接', async () => {
+  const stamp = Date.now();
+  const email = `profile.${stamp}@company.com`;
+  const created = await api('/api/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { full_name: '资料测试', email, password: '123456', role: 'manager', person_id: null },
+  });
+  assert.equal(created.status, 201);
+  const userId = created.data.user.id;
+  const userCookie = await login(email);
+
+  const newEmail = `profile.new.${stamp}@company.com`;
+  const profile = await api('/api/auth/profile', {
+    method: 'PATCH',
+    cookie: userCookie,
+    body: { full_name: '资料测试改名', email: newEmail },
+  });
+  assert.equal(profile.status, 200);
+  assert.equal(profile.data.user.full_name, '资料测试改名');
+  assert.equal(profile.data.user.email, newEmail);
+
+  const reset = await api(`/api/users/${userId}/reset-token`, {
+    method: 'POST',
+    cookie: adminCookie,
+  });
+  assert.equal(reset.status, 201);
+  assert.equal(typeof reset.data.token, 'string');
+
+  const resetResult = await api('/api/auth/reset-password', {
+    method: 'POST',
+    body: { token: reset.data.token, new_password: 'newpass456' },
+  });
+  assert.equal(resetResult.status, 200);
+
+  const reuse = await api('/api/auth/reset-password', {
+    method: 'POST',
+    body: { token: reset.data.token, new_password: 'another789' },
+  });
+  assert.equal(reuse.status, 400);
+
+  const newLogin = await api('/api/auth/login', {
+    method: 'POST',
+    body: { email: newEmail, password: 'newpass456' },
+  });
+  assert.equal(newLogin.status, 200);
+
+  const removed = await api(`/api/users/${userId}`, {
+    method: 'DELETE',
+    cookie: adminCookie,
+  });
+  assert.equal(removed.status, 200);
+});
+
+test('收支支持预算分类和回款节点关联校验', async () => {
+  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const project = bootstrap.data.projects[0];
+  const plan = bootstrap.data.invoicePlans.find((item) => item.project_id === project.id);
+  assert.ok(plan);
+
+  const expense = await api('/api/transactions', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      type: 'expense',
+      category: '差旅',
+      description: '预算分类测试',
+      amount: 88,
+      transaction_date: '2026-10-06',
+      project_id: project.id,
+      budget_category: 'travel',
+      invoice_plan_id: null,
+    },
+  });
+  assert.equal(expense.status, 201);
+  assert.equal(expense.data.budget_category, 'travel');
+
+  const income = await api('/api/transactions', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      type: 'income',
+      category: '开发服务',
+      description: '回款关联测试',
+      amount: 100,
+      transaction_date: '2026-10-06',
+      project_id: project.id,
+      invoice_plan_id: plan.id,
+    },
+  });
+  assert.equal(income.status, 201);
+  assert.equal(income.data.invoice_plan_id, plan.id);
+  assert.equal(income.data.budget_category, null);
+
+  const otherPlan = bootstrap.data.invoicePlans.find((item) => item.project_id !== project.id);
+  assert.ok(otherPlan);
+  const mismatched = await api('/api/transactions', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      type: 'income',
+      category: '开发服务',
+      description: '跨项目关联',
+      amount: 10,
+      transaction_date: '2026-10-06',
+      project_id: project.id,
+      invoice_plan_id: otherPlan.id,
+    },
+  });
+  assert.equal(mismatched.status, 400);
+
+  const invalidExpense = await api('/api/transactions', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      type: 'expense',
+      category: '差旅',
+      description: '支出关联回款',
+      amount: 10,
+      transaction_date: '2026-10-06',
+      project_id: project.id,
+      invoice_plan_id: plan.id,
+    },
+  });
+  assert.equal(invalidExpense.status, 400);
+
+  await api(`/api/transactions/${expense.data.id}`, { method: 'DELETE', cookie: managerCookie });
+  await api(`/api/transactions/${income.data.id}`, { method: 'DELETE', cookie: managerCookie });
+});
+
 test('最后一名管理员不能被降级、停用或删除', async () => {
   const me = (await api('/api/bootstrap', { cookie: adminCookie })).data.user;
 

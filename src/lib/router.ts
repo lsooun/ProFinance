@@ -49,6 +49,16 @@ export function parseRoute(hash: string): RouteState {
   return { page, projectId, transactionProjectId };
 }
 
+export function getResetTokenFromHash(hash: string): string | null {
+  const match = hash.match(/^#\/reset-password\?token=([^&]+)/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
 export function pathFor(page: PageKey, projectId?: string | null): string {
   if (page === 'projects' && projectId) return `/projects/${encodeURIComponent(projectId)}`;
   return `/${page}`;

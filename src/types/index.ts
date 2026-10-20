@@ -39,6 +39,13 @@ export interface Project {
 }
 
 export type TransactionType = 'income' | 'expense';
+export type BudgetCategory = 'labor' | 'travel' | 'other';
+
+export const BUDGET_CATEGORY_LABELS: Record<BudgetCategory, string> = {
+  labor: '人力',
+  travel: '差旅',
+  other: '其他',
+};
 
 export interface Transaction {
   id: string;
@@ -49,6 +56,8 @@ export interface Transaction {
   amount: number;
   transaction_date: string;
   created_by: string | null;
+  budget_category: BudgetCategory | null;
+  invoice_plan_id: string | null;
   created_at: string;
 }
 
@@ -92,6 +101,7 @@ export interface InvoicePlan {
   stage: string;
   percentage: number;
   status: InvoiceStatus;
+  paid_amount?: number;
   created_at: string;
 }
 

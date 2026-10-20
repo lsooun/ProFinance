@@ -134,6 +134,7 @@ export default function LoginPage() {
             <Button type="submit" size="lg" className="w-full" disabled={loading}>
               {loading ? '登录中…' : '登录'}
             </Button>
+            <p className="text-center text-xs text-slate-400">忘记密码？请联系管理员获取一次性重置链接。</p>
           </form>
 
           {SHOW_DEMO_ACCOUNTS && (

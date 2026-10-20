@@ -122,6 +122,30 @@ function syncManagerOption(user: UserAccount): void {
   }
 }
 
+export async function updateOwnProfile(fullName: string, email: string): Promise<UserAccount | null> {
+  const result = await mutate<{ user: UserAccount }>('/api/auth/profile', 'PATCH', {
+    full_name: fullName,
+    email,
+  });
+  if (!result) return null;
+  const store = data();
+  store.user = result.user;
+  const index = store.users.findIndex((user) => user.id === result.user.id);
+  if (index !== -1) store.users[index] = result.user;
+  store.projects = store.projects.map((project) =>
+    project.manager_user_id === result.user.id ? { ...project, manager_name: result.user.full_name } : project,
+  );
+  syncManagerOption(result.user);
+  return result.user;
+}
+
+export async function createPasswordResetToken(userId: string): Promise<{ token: string; expires_at: string } | null> {
+  return mutate<{ token: string; expires_at: string }>(
+    `/api/users/${encodeURIComponent(userId)}/reset-token`,
+    'POST',
+  );
+}
+
 // ===== Projects =====
 
 export function getProjects(): Project[] {
@@ -158,7 +182,7 @@ export async function deleteProject(id: string): Promise<boolean> {
   const store = data();
   store.projects = store.projects.filter((project) => project.id !== id);
   store.transactions = store.transactions.map((tx) =>
-    tx.project_id === id ? { ...tx, project_id: null } : tx,
+    tx.project_id === id ? { ...tx, project_id: null, invoice_plan_id: null } : tx,
   );
   store.assignments = store.assignments.filter((assignment) => assignment.project_id !== id);
   store.timesheets = store.timesheets.filter((entry) => entry.project_id !== id);
@@ -293,6 +317,19 @@ export async function createAssignment(dataInput: {
   return result;
 }
 
+export async function updateAssignment(id: string, plannedHours: number): Promise<ProjectAssignment | null> {
+  const result = await mutate<ProjectAssignment>(
+    `/api/assignments/${encodeURIComponent(id)}`,
+    'PATCH',
+    { planned_hours: plannedHours },
+  );
+  if (!result) return null;
+  const store = data();
+  const index = store.assignments.findIndex((assignment) => assignment.id === id);
+  if (index !== -1) store.assignments[index] = result;
+  return result;
+}
+
 export async function deleteAssignment(id: string): Promise<boolean> {
   const result = await mutate<{ ok: boolean }>(`/api/assignments/${encodeURIComponent(id)}`, 'DELETE');
   if (!result?.ok) return false;
@@ -359,9 +396,15 @@ export function getPersonActualHours(personId: string): number {
 // ===== Invoice plans =====
 
 export function getInvoicePlans(): InvoicePlan[] {
-  return [...data().invoicePlans].sort(
-    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-  );
+  const transactions = data().transactions;
+  return [...data().invoicePlans]
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .map((plan) => ({
+      ...plan,
+      paid_amount: transactions
+        .filter((tx) => tx.type === 'income' && tx.invoice_plan_id === plan.id)
+        .reduce((sum, tx) => sum + tx.amount, 0),
+    }));
 }
 
 export function getInvoicePlansByProject(projectId: string): InvoicePlan[] {
@@ -396,7 +439,11 @@ export async function updateInvoicePlan(
 export async function deleteInvoicePlan(id: string): Promise<boolean> {
   const result = await mutate<{ ok: boolean }>(`/api/invoices/${encodeURIComponent(id)}`, 'DELETE');
   if (!result?.ok) return false;
-  data().invoicePlans = data().invoicePlans.filter((plan) => plan.id !== id);
+  const store = data();
+  store.invoicePlans = store.invoicePlans.filter((plan) => plan.id !== id);
+  store.transactions = store.transactions.map((tx) =>
+    tx.invoice_plan_id === id ? { ...tx, invoice_plan_id: null } : tx,
+  );
   return true;
 }
 

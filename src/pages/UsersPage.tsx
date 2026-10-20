@@ -6,12 +6,12 @@ import {
 import { formatDate } from '@/lib/format';
 import type { UserRole, UserAccount } from '@/types';
 import {
-  getUsers, createUser, updateUser, deleteUser, getPersons,
+  getUsers, createUser, updateUser, deleteUser, getPersons, createPasswordResetToken,
 } from '@/lib/storage';
 import { notify } from '@/lib/notify';
 import {
   UserPlus, Pencil, Trash2, Users, AlertCircle, Shield, User as UserIcon,
-  Lock, Mail, Link2, Search,
+  Lock, Mail, Link2, Search, KeyRound, Copy, Check,
 } from 'lucide-react';
 
 export default function UsersPage() {
@@ -22,6 +22,9 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<UserAccount | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<UserAccount | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [resetLink, setResetLink] = useState<{ user: UserAccount; url: string; expiresAt: string } | null>(null);
+  const [generatingReset, setGeneratingReset] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   function reload() {
     setUsers(getUsers());
@@ -50,6 +53,31 @@ export default function UsersPage() {
     }
     const updated = await updateUser(user.id, { is_active: !user.is_active });
     if (updated) reload();
+  }
+
+  async function handleGenerateReset(user: UserAccount) {
+    setGeneratingReset(user.id);
+    const result = await createPasswordResetToken(user.id);
+    setGeneratingReset(null);
+    if (!result) return;
+    const base = `${window.location.origin}${window.location.pathname}`;
+    setResetLink({
+      user,
+      url: `${base}#/reset-password?token=${encodeURIComponent(result.token)}`,
+      expiresAt: result.expires_at,
+    });
+    setCopied(false);
+  }
+
+  async function copyResetLink() {
+    if (!resetLink) return;
+    try {
+      await navigator.clipboard.writeText(resetLink.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      notify('复制失败，请手动选择链接复制', 'error');
+    }
   }
 
   async function handleDelete() {
@@ -157,6 +185,12 @@ export default function UsersPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{formatDate(user.created_at)}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => void handleGenerateReset(user)}
+                        className="text-slate-400 hover:text-amber-600 p-1 rounded transition-colors"
+                        title="生成密码重置链接"
+                        disabled={generatingReset === user.id}
+                      ><KeyRound className="w-4 h-4" /></button>
                       <button onClick={() => openEdit(user)} className="text-slate-400 hover:text-blue-600 p-1 rounded transition-colors" title="编辑"><Pencil className="w-4 h-4" /></button>
                       {user.id !== currentProfile?.id && (
                         <button onClick={() => setDeleteTarget(user)} className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors ml-1" title="删除"><Trash2 className="w-4 h-4" /></button>
@@ -182,6 +216,34 @@ export default function UsersPage() {
             if (editingUser?.id === currentProfile?.id) await refreshProfile();
           }}
         />
+      )}
+
+      {resetLink && (
+        <Modal open onClose={() => setResetLink(null)} title="密码重置链接">
+          <div className="space-y-4">
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">
+              为 <span className="font-semibold">{resetLink.user.full_name}</span> 生成了一次性重置链接，30 分钟内有效。请通过安全渠道发送给用户，链接只能使用一次。
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-sm font-medium text-slate-700">重置链接</label>
+              <textarea
+                readOnly
+                value={resetLink.url}
+                rows={3}
+                onFocus={(event) => event.currentTarget.select()}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-xs font-mono text-slate-700 bg-slate-50 focus:outline-none"
+              />
+            </div>
+            <p className="text-xs text-slate-500">到期时间：{formatDate(resetLink.expiresAt)} {new Date(resetLink.expiresAt).toLocaleTimeString('zh-CN')}</p>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="outline" onClick={() => setResetLink(null)}>关闭</Button>
+              <Button onClick={() => void copyResetLink()}>
+                {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                {copied ? '已复制' : '复制链接'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {deleteTarget && (

@@ -3,7 +3,7 @@ import { Card, Button, Badge, EmptyState, StatCard, Modal, Input } from '@/compo
 import {
   formatCurrency, formatCurrencyDetailed, formatDate, formatHours,
 } from '@/lib/format';
-import { projectFinancials } from '@/lib/finance';
+import { budgetActuals, effectiveInvoiceStatus, invoiceAmount, projectFinancials } from '@/lib/finance';
 import {
   STATUS_LABELS, STATUS_COLORS,
   PERSON_ROLE_LABELS,
@@ -13,7 +13,7 @@ import {
 } from '@/types';
 import {
   getProjectById, getTransactionsByProject,
-  getAssignmentsByProject, createAssignment, deleteAssignment,
+  getAssignmentsByProject, createAssignment, updateAssignment, deleteAssignment,
   getTimesheetsByProject, getProjectActualHours, getProjectPlannedHours,
   getPersons,
   getInvoicePlansByProject, getInvoicePlanTotalPercentage, createInvoicePlan, deleteInvoicePlan, updateInvoicePlan,
@@ -22,7 +22,7 @@ import {
 import { useAuth } from '@/context/auth-context';
 import {
   ArrowLeft, Calendar, User, Target, TrendingUp, TrendingDown,
-  Wallet, Plus, ArrowUpRight, ArrowDownRight, Clock, Users, Trash2,
+  Wallet, Plus, ArrowUpRight, ArrowDownRight, Clock, Users, Trash2, Pencil,
   FileText, Paperclip, Download, Upload, FileSpreadsheet, DollarSign,
 } from 'lucide-react';
 
@@ -47,6 +47,8 @@ export default function ProjectDetailPage({
   const persons = getPersons();
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<InvoicePlan | null>(null);
+  const [editingAssignment, setEditingAssignment] = useState<ProjectAssignment | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -73,6 +75,12 @@ export default function ProjectDetailPage({
   }
 
   const financials = projectFinancials(project, transactions);
+  const budgetActualsByCategory = budgetActuals(transactions);
+  const budgetCards = [
+    { key: 'labor', label: '人力预算', budget: project.budget_labor, actual: budgetActualsByCategory.labor },
+    { key: 'travel', label: '差旅预算', budget: project.budget_travel, actual: budgetActualsByCategory.travel },
+    { key: 'other', label: '其他预算', budget: project.budget_other, actual: budgetActualsByCategory.other },
+  ];
   const budget = financials.budget;
   const actualCost = financials.actualExpense;
   const plannedProfit = financials.plannedProfit;
@@ -87,6 +95,7 @@ export default function ProjectDetailPage({
   const hoursUsed = plannedHours > 0 ? (actualHours / plannedHours) * 100 : 0;
   const invoiceTotalPct = getInvoicePlanTotalPercentage(projectId);
   const invoiceTotalAmount = invoicePlans.reduce((sum, plan) => sum + (plan.percentage / 100) * project.revenue, 0);
+  const invoicePaidTotal = invoicePlans.reduce((sum, plan) => sum + (plan.paid_amount ?? 0), 0);
   const canAddInvoice = invoiceTotalPct < 100;
 
   const myAssignment = assignments.find((assignment) => assignment.person_id === user?.person_id);
@@ -112,6 +121,26 @@ export default function ProjectDetailPage({
 
   async function handleDeleteAttachment(id: string) {
     if (await deleteAttachment(id)) reload();
+  }
+
+  function openNewInvoice() {
+    setEditingInvoice(null);
+    setInvoiceModalOpen(true);
+  }
+
+  function openEditInvoice(plan: InvoicePlan) {
+    setEditingInvoice(plan);
+    setInvoiceModalOpen(true);
+  }
+
+  function openNewAssignment() {
+    setEditingAssignment(null);
+    setAssignModalOpen(true);
+  }
+
+  function openEditAssignment(assignment: ProjectAssignment) {
+    setEditingAssignment(assignment);
+    setAssignModalOpen(true);
   }
 
   function handleDownload(attachment: ProjectAttachment) {
@@ -194,21 +223,26 @@ export default function ProjectDetailPage({
           </div>
 
           <Card className="p-5">
-            <h3 className="text-sm font-semibold text-slate-900 mb-4">预算拆分</h3>
+            <h3 className="text-sm font-semibold text-slate-900 mb-4">预算拆分与实际执行</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="rounded-lg border border-slate-200 p-4">
-                <p className="text-xs text-slate-500 mb-1">人力预算</p>
-                <p className="text-lg font-bold text-slate-900">{formatCurrency(project.budget_labor)}</p>
-              </div>
-              <div className="rounded-lg border border-slate-200 p-4">
-                <p className="text-xs text-slate-500 mb-1">差旅预算</p>
-                <p className="text-lg font-bold text-slate-900">{formatCurrency(project.budget_travel)}</p>
-              </div>
-              <div className="rounded-lg border border-slate-200 p-4">
-                <p className="text-xs text-slate-500 mb-1">其他预算</p>
-                <p className="text-lg font-bold text-slate-900">{formatCurrency(project.budget_other)}</p>
-              </div>
+              {budgetCards.map((card) => {
+                const used = card.budget > 0 ? (card.actual / card.budget) * 100 : 0;
+                return (
+                  <div key={card.key} className="rounded-lg border border-slate-200 p-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-xs text-slate-500">{card.label}</p>
+                      <span className={`text-xs font-medium ${used > 100 ? 'text-rose-600' : 'text-slate-500'}`}>{used.toFixed(0)}%</span>
+                    </div>
+                    <p className="text-lg font-bold text-slate-900">{formatCurrency(card.actual)}</p>
+                    <p className="text-xs text-slate-400 mb-2">预算 {formatCurrency(card.budget)}</p>
+                    <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                      <div className={`h-full rounded-full ${used > 100 ? 'bg-rose-500' : used > 80 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(used, 100)}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+            <p className="mt-3 text-xs text-slate-400">实际支出按收支记录中的“预算分类”归集。</p>
           </Card>
 
           <Card className="p-5">
@@ -218,7 +252,7 @@ export default function ProjectDetailPage({
                 <h3 className="text-base font-semibold text-slate-900">回款计划</h3>
               </div>
               {canAddInvoice && (
-                <Button size="sm" onClick={() => setInvoiceModalOpen(true)}><Plus className="w-4 h-4" /> 新增回款节点</Button>
+                <Button size="sm" onClick={openNewInvoice}><Plus className="w-4 h-4" /> 新增回款节点</Button>
               )}
             </div>
 
@@ -227,7 +261,7 @@ export default function ProjectDetailPage({
                 icon={<FileText className="w-6 h-6" />}
                 title="暂无回款计划"
                 description="按阶段设置回款日期、节点和比例，金额按合同收入自动计算。"
-                action={canAddInvoice ? <Button size="sm" onClick={() => setInvoiceModalOpen(true)}><Plus className="w-4 h-4" /> 新增回款节点</Button> : undefined}
+                action={canAddInvoice ? <Button size="sm" onClick={openNewInvoice}><Plus className="w-4 h-4" /> 新增回款节点</Button> : undefined}
               />
             ) : (
               <div className="space-y-3">
@@ -239,35 +273,52 @@ export default function ProjectDetailPage({
                         <th className="px-4 py-2.5 font-medium">节点</th>
                         <th className="px-4 py-2.5 font-medium text-right">比例</th>
                         <th className="px-4 py-2.5 font-medium text-right">金额</th>
+                        <th className="px-4 py-2.5 font-medium text-right">已收</th>
                         <th className="px-4 py-2.5 font-medium">状态</th>
                         <th className="px-4 py-2.5 font-medium text-right">操作</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {invoicePlans.map((plan) => (
-                        <tr key={plan.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{formatDate(plan.date)}</td>
-                          <td className="px-4 py-2.5 text-slate-900 font-medium">{plan.stage}</td>
-                          <td className="px-4 py-2.5 text-right text-slate-600">{plan.percentage}%</td>
-                          <td className="px-4 py-2.5 text-right font-semibold text-slate-900 whitespace-nowrap">{formatCurrency((plan.percentage / 100) * project.revenue)}</td>
-                          <td className="px-4 py-2.5">
-                            <select
-                              value={plan.status}
-                              onChange={(e) => void handleStatusChange(plan.id, e.target.value as InvoiceStatus)}
-                              className={`rounded-md border px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 ${INVOICE_STATUS_COLORS[plan.status]}`}
-                            >
-                              {(Object.keys(INVOICE_STATUS_LABELS) as InvoiceStatus[]).map((status) => (
-                                <option key={status} value={status}>{INVOICE_STATUS_LABELS[status]}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            <button onClick={() => void handleDeleteInvoice(plan.id)} className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors" title="删除">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {invoicePlans.map((plan) => {
+                        const paid = plan.paid_amount ?? 0;
+                        const status = effectiveInvoiceStatus(plan, project.revenue);
+                        const isAuto = paid > 0;
+                        return (
+                          <tr key={plan.id} className="hover:bg-slate-50 transition-colors">
+                            <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{formatDate(plan.date)}</td>
+                            <td className="px-4 py-2.5 text-slate-900 font-medium">{plan.stage}</td>
+                            <td className="px-4 py-2.5 text-right text-slate-600">{plan.percentage}%</td>
+                            <td className="px-4 py-2.5 text-right font-semibold text-slate-900 whitespace-nowrap">{formatCurrency(invoiceAmount(plan, project.revenue))}</td>
+                            <td className="px-4 py-2.5 text-right text-slate-600 whitespace-nowrap">{formatCurrency(paid)}</td>
+                            <td className="px-4 py-2.5">
+                              {isAuto ? (
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <Badge className={INVOICE_STATUS_COLORS[status]}>{INVOICE_STATUS_LABELS[status]}</Badge>
+                                  <span className="text-[10px] text-slate-400">按关联收入自动对账</span>
+                                </div>
+                              ) : (
+                                <select
+                                  value={plan.status}
+                                  onChange={(e) => void handleStatusChange(plan.id, e.target.value as InvoiceStatus)}
+                                  className={`rounded-md border px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 ${INVOICE_STATUS_COLORS[plan.status]}`}
+                                >
+                                  {(Object.keys(INVOICE_STATUS_LABELS) as InvoiceStatus[]).map((item) => (
+                                    <option key={item} value={item}>{INVOICE_STATUS_LABELS[item]}</option>
+                                  ))}
+                                </select>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                              <button onClick={() => openEditInvoice(plan)} className="text-slate-400 hover:text-blue-600 p-1 rounded transition-colors" title="编辑">
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button onClick={() => void handleDeleteInvoice(plan.id)} className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors ml-1" title="删除">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-slate-200">
@@ -276,6 +327,7 @@ export default function ProjectDetailPage({
                           <span className={`text-sm font-bold ${invoiceTotalPct === 100 ? 'text-emerald-600' : invoiceTotalPct > 100 ? 'text-rose-600' : 'text-slate-900'}`}>{invoiceTotalPct}%</span>
                         </td>
                         <td className="px-4 py-3 text-right text-sm font-bold text-slate-900">{formatCurrency(invoiceTotalAmount)}</td>
+                        <td className="px-4 py-3 text-right text-sm font-bold text-emerald-700">{formatCurrency(invoicePaidTotal)}</td>
                         <td className="px-4 py-3" />
                         <td />
                       </tr>
@@ -287,7 +339,7 @@ export default function ProjectDetailPage({
                   <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
                     <div className={`h-full rounded-full transition-all ${invoiceTotalPct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(invoiceTotalPct, 100)}%` }} />
                   </div>
-                  <span className="text-xs text-slate-500 whitespace-nowrap">已规划合同收入的 {invoiceTotalPct}%</span>
+                  <span className="text-xs text-slate-500 whitespace-nowrap">已规划合同收入的 {invoiceTotalPct}%，已回款 {formatCurrency(invoicePaidTotal)}</span>
                 </div>
 
                 {invoiceTotalPct >= 100 && (
@@ -414,7 +466,7 @@ export default function ProjectDetailPage({
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-base font-semibold text-slate-900">项目成员</h3>
           {canManage && (
-            <Button size="sm" onClick={() => setAssignModalOpen(true)}><Plus className="w-4 h-4" /> 分配成员</Button>
+            <Button size="sm" onClick={openNewAssignment}><Plus className="w-4 h-4" /> 分配成员</Button>
           )}
         </div>
         {assignments.length === 0 ? (
@@ -422,7 +474,7 @@ export default function ProjectDetailPage({
             icon={<Users className="w-6 h-6" />}
             title="暂无项目成员"
             description="分配团队成员并设置计划工时。"
-            action={canManage ? <Button size="sm" onClick={() => setAssignModalOpen(true)}><Plus className="w-4 h-4" /> 分配成员</Button> : undefined}
+            action={canManage ? <Button size="sm" onClick={openNewAssignment}><Plus className="w-4 h-4" /> 分配成员</Button> : undefined}
           />
         ) : (
           <div className="space-y-2">
@@ -450,9 +502,14 @@ export default function ProjectDetailPage({
                       </div>
                     )}
                     {canManage && (
-                      <button onClick={() => void handleDeleteAssignment(assignment.id)} className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors" title="移除成员">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <>
+                        <button onClick={() => openEditAssignment(assignment)} className="text-slate-400 hover:text-blue-600 p-1 rounded transition-colors" title="编辑计划工时">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => void handleDeleteAssignment(assignment.id)} className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors" title="移除成员">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -622,22 +679,24 @@ export default function ProjectDetailPage({
       {assignModalOpen && (
         <AssignMemberModal
           open={assignModalOpen}
-          onClose={() => setAssignModalOpen(false)}
+          onClose={() => { setAssignModalOpen(false); setEditingAssignment(null); }}
           projectId={projectId}
           persons={persons}
           existingAssignments={assignments}
-          onSaved={() => { setAssignModalOpen(false); reload(); }}
+          assignment={editingAssignment}
+          onSaved={() => { setAssignModalOpen(false); setEditingAssignment(null); reload(); }}
         />
       )}
 
       {invoiceModalOpen && (
         <InvoicePlanModal
           open={invoiceModalOpen}
-          onClose={() => setInvoiceModalOpen(false)}
+          onClose={() => { setInvoiceModalOpen(false); setEditingInvoice(null); }}
           projectId={projectId}
-          currentTotalPct={invoiceTotalPct}
+          currentTotalPct={invoiceTotalPct - (editingInvoice?.percentage ?? 0)}
           revenue={project.revenue}
-          onSaved={() => { setInvoiceModalOpen(false); reload(); }}
+          plan={editingInvoice}
+          onSaved={() => { setInvoiceModalOpen(false); setEditingInvoice(null); reload(); }}
         />
       )}
     </div>
@@ -645,50 +704,64 @@ export default function ProjectDetailPage({
 }
 
 function AssignMemberModal({
-  open, onClose, projectId, persons, existingAssignments, onSaved,
+  open, onClose, projectId, persons, existingAssignments, assignment, onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   projectId: string;
   persons: Person[];
   existingAssignments: ProjectAssignment[];
+  assignment: ProjectAssignment | null;
   onSaved: () => void;
 }) {
-  const [personId, setPersonId] = useState('');
-  const [plannedHours, setPlannedHours] = useState('80');
+  const isEditing = Boolean(assignment);
+  const [personId, setPersonId] = useState(assignment?.person_id || '');
+  const [plannedHours, setPlannedHours] = useState(assignment?.planned_hours?.toString() || '80');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const availablePersons = persons.filter(
-    (person) => person.is_active && !existingAssignments.some((assignment) => assignment.person_id === person.id),
+    (person) => person.is_active && !existingAssignments.some((item) => item.person_id === person.id),
   );
+  const editingPerson = assignment
+    ? persons.find((person) => person.id === assignment.person_id) || null
+    : null;
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!personId) { setError('请选择人员。'); return; }
+    if (!isEditing && !personId) { setError('请选择人员。'); return; }
     const hours = parseFloat(plannedHours);
     if (!hours || hours <= 0) { setError('计划工时必须大于 0。'); return; }
     setSaving(true);
-    const created = await createAssignment({ project_id: projectId, person_id: personId, planned_hours: hours });
+    const result = isEditing && assignment
+      ? await updateAssignment(assignment.id, hours)
+      : await createAssignment({ project_id: projectId, person_id: personId, planned_hours: hours });
     setSaving(false);
-    if (created) onSaved();
+    if (result) onSaved();
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="分配项目成员">
+    <Modal open={open} onClose={onClose} title={isEditing ? '编辑成员计划工时' : '分配项目成员'}>
       <form onSubmit={handleSave} className="space-y-4">
-        <select value={personId} onChange={(e) => setPersonId(e.target.value)}
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
-          <option value="">选择人员…</option>
-          {availablePersons.map((person) => <option key={person.id} value={person.id}>{person.name} — {PERSON_ROLE_LABELS[person.role]}</option>)}
-          {availablePersons.length === 0 && <option value="" disabled>所有在职人员都已分配</option>}
-        </select>
+        {isEditing ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            成员：<span className="font-medium">{editingPerson?.name || '未知人员'}</span>
+            <span className="text-slate-400 ml-2">（成员不可变，仅调整计划工时）</span>
+          </div>
+        ) : (
+          <select value={personId} onChange={(e) => setPersonId(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+            <option value="">选择人员…</option>
+            {availablePersons.map((person) => <option key={person.id} value={person.id}>{person.name} — {PERSON_ROLE_LABELS[person.role]}</option>)}
+            {availablePersons.length === 0 && <option value="" disabled>所有在职人员都已分配</option>}
+          </select>
+        )}
         <Input label="计划工时（小时）" type="number" min="1" step="1" required value={plannedHours} onChange={(e) => setPlannedHours(e.target.value)} placeholder="80" />
         {error && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
         <div className="flex justify-end gap-3 pt-2">
           <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
-          <Button type="submit" disabled={saving || availablePersons.length === 0}>{saving ? '分配中…' : '分配'}</Button>
+          <Button type="submit" disabled={saving || (!isEditing && availablePersons.length === 0)}>{saving ? '保存中…' : isEditing ? '保存修改' : '分配'}</Button>
         </div>
       </form>
     </Modal>
@@ -696,24 +769,27 @@ function AssignMemberModal({
 }
 
 function InvoicePlanModal({
-  open, onClose, projectId, currentTotalPct, revenue, onSaved,
+  open, onClose, projectId, currentTotalPct, revenue, plan, onSaved,
 }: {
   open: boolean;
   onClose: () => void;
   projectId: string;
   currentTotalPct: number;
   revenue: number;
+  plan: InvoicePlan | null;
   onSaved: () => void;
 }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [stage, setStage] = useState('');
-  const [percentage, setPercentage] = useState('');
+  const isEditing = Boolean(plan);
+  const [date, setDate] = useState(plan?.date || new Date().toISOString().slice(0, 10));
+  const [stage, setStage] = useState(plan?.stage || '');
+  const [percentage, setPercentage] = useState(plan?.percentage?.toString() || '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const remaining = 100 - currentTotalPct;
   const pctNum = parseFloat(percentage) || 0;
   const amount = (pctNum / 100) * revenue;
+  const maxInput = Math.max(remaining, 1);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -726,21 +802,23 @@ function InvoicePlanModal({
       return;
     }
     setSaving(true);
-    const created = await createInvoicePlan({ project_id: projectId, date, stage: stage.trim(), percentage: pctNum, status: 'unbilled' });
+    const result = isEditing && plan
+      ? await updateInvoicePlan(plan.id, { date, stage: stage.trim(), percentage: pctNum })
+      : await createInvoicePlan({ project_id: projectId, date, stage: stage.trim(), percentage: pctNum, status: 'unbilled' });
     setSaving(false);
-    if (created) onSaved();
+    if (result) onSaved();
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="新增回款节点">
+    <Modal open={open} onClose={onClose} title={isEditing ? '编辑回款节点' : '新增回款节点'}>
       <form onSubmit={handleSave} className="space-y-4">
         <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-700">
-          已规划：<strong>{currentTotalPct}%</strong>，剩余：<strong>{remaining}%</strong>，合同收入：<strong>{formatCurrency(revenue)}</strong>
+          其他节点已规划：<strong>{currentTotalPct}%</strong>，可分配：<strong>{Math.max(remaining, 0)}%</strong>，合同收入：<strong>{formatCurrency(revenue)}</strong>
         </div>
         <Input label="日期" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
         <Input label="回款节点" required value={stage} onChange={(e) => setStage(e.target.value)} placeholder="例如：第一阶段：项目启动" />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label={`比例（最多 ${remaining}%）`} type="number" min="1" max={remaining} step="1" required value={percentage} onChange={(e) => setPercentage(e.target.value)} placeholder="例如：40" />
+          <Input label={`比例（最多 ${Math.max(remaining, 0)}%）`} type="number" min="1" max={maxInput} step="1" required value={percentage} onChange={(e) => setPercentage(e.target.value)} placeholder="例如：40" />
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1.5">计算金额</label>
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
@@ -748,10 +826,13 @@ function InvoicePlanModal({
             </div>
           </div>
         </div>
+        {isEditing && (
+          <p className="text-xs text-slate-400">修改比例时会校验所有回款节点的合计不超过 100%。回款状态由关联收入自动对账，或按原手工状态保留。</p>
+        )}
         {error && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
         <div className="flex justify-end gap-3 pt-2">
           <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
-          <Button type="submit" disabled={saving}>{saving ? '添加中…' : '添加节点'}</Button>
+          <Button type="submit" disabled={saving}>{saving ? '保存中…' : isEditing ? '保存修改' : '添加节点'}</Button>
         </div>
       </form>
     </Modal>

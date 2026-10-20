@@ -1,4 +1,4 @@
-import type { Project, Transaction } from '@/types';
+import type { BudgetCategory, InvoicePlan, InvoiceStatus, Project, Transaction } from '@/types';
 import { calculateBudgetTotal } from '@/lib/format';
 
 export interface ProjectFinancials {
@@ -17,6 +17,42 @@ export function sumTransactions(transactions: Transaction[], type: 'income' | 'e
   return transactions
     .filter((tx) => tx.type === type)
     .reduce((sum, tx) => sum + tx.amount, 0);
+}
+
+export function suggestedBudgetCategory(category: string): BudgetCategory {
+  if (category === '工资' || category === 'Salary') return 'labor';
+  if (category === '差旅' || category === 'Travel') return 'travel';
+  return 'other';
+}
+
+export interface BudgetActuals {
+  labor: number;
+  travel: number;
+  other: number;
+  total: number;
+}
+
+export function budgetActuals(transactions: Transaction[]): BudgetActuals {
+  const actuals: BudgetActuals = { labor: 0, travel: 0, other: 0, total: 0 };
+  for (const tx of transactions) {
+    if (tx.type !== 'expense') continue;
+    const category = tx.budget_category === 'labor' || tx.budget_category === 'travel'
+      ? tx.budget_category
+      : 'other';
+    actuals[category] += tx.amount;
+    actuals.total += tx.amount;
+  }
+  return actuals;
+}
+
+export function invoiceAmount(plan: InvoicePlan, revenue: number): number {
+  return (plan.percentage / 100) * revenue;
+}
+
+export function effectiveInvoiceStatus(plan: InvoicePlan, revenue: number): InvoiceStatus {
+  const paid = plan.paid_amount ?? 0;
+  if (paid <= 0) return plan.status;
+  return paid >= invoiceAmount(plan, revenue) ? 'collected' : 'invoiced';
 }
 
 export function transactionsForProject(transactions: Transaction[], projectId: string): Transaction[] {

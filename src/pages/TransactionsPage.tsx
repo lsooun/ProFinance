@@ -3,14 +3,16 @@ import { useAuth } from '@/context/auth-context';
 import {
   Card, Button, Input, Select, Textarea, Modal, Badge, EmptyState, StatCard,
 } from '@/components/ui';
-import { formatCurrencyDetailed, formatDate } from '@/lib/format';
+import { formatCurrency, formatCurrencyDetailed, formatDate } from '@/lib/format';
 import {
-  INCOME_CATEGORIES, EXPENSE_CATEGORIES,
-  type Transaction, type TransactionType, type Project,
+  INCOME_CATEGORIES, EXPENSE_CATEGORIES, BUDGET_CATEGORY_LABELS,
+  type BudgetCategory, type Transaction, type TransactionType, type Project,
 } from '@/types';
 import {
   getTransactions, getProjects, createTransaction, updateTransaction, deleteTransaction,
+  getInvoicePlansByProject,
 } from '@/lib/storage';
+import { suggestedBudgetCategory } from '@/lib/finance';
 import {
   Plus, Search, Pencil, Trash2, ArrowUpRight, ArrowDownRight,
   Wallet, ArrowLeftRight, AlertCircle, Upload, Download, CheckCircle2,
@@ -223,10 +225,19 @@ function TransactionFormModal({
   const [amount, setAmount] = useState(transaction?.amount?.toString() || '');
   const [transactionDate, setTransactionDate] = useState(transaction?.transaction_date || new Date().toISOString().slice(0, 10));
   const [projectId, setProjectId] = useState(transaction?.project_id || presetProjectId || '');
+  const [budgetCategory, setBudgetCategory] = useState<BudgetCategory>(
+    transaction?.budget_category || 'other',
+  );
+  const [invoicePlanId, setInvoicePlanId] = useState(transaction?.invoice_plan_id || '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const selectedProject = projects.find((project) => project.id === projectId) || null;
+  const projectPlans = projectId ? getInvoicePlansByProject(projectId) : [];
+  const currentPlanMissing = Boolean(
+    invoicePlanId && !projectPlans.some((plan) => plan.id === invoicePlanId),
+  );
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -236,14 +247,17 @@ function TransactionFormModal({
       return;
     }
     setSaving(true);
+    const finalCategory = category || categories[0];
     const payload = {
       type,
-      category: category || categories[0],
+      category: finalCategory,
       description,
       amount: parseFloat(amount),
       transaction_date: transactionDate,
       project_id: projectId || null,
       created_by: userId,
+      budget_category: type === 'expense' ? (budgetCategory || suggestedBudgetCategory(finalCategory)) : null,
+      invoice_plan_id: type === 'income' ? (invoicePlanId || null) : null,
     };
     const saved = transaction
       ? await updateTransaction(transaction.id, payload)
@@ -256,11 +270,11 @@ function TransactionFormModal({
     <Modal open={open} onClose={onClose} title={transaction ? '编辑收支' : '新增收支'}>
       <form onSubmit={handleSave} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <button type="button" onClick={() => { setType('income'); setCategory(''); }}
+          <button type="button" onClick={() => { setType('income'); setCategory(''); setInvoicePlanId(''); }}
             className={`flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-all ${type === 'income' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
             <ArrowUpRight className="w-4 h-4" /> 收入
           </button>
-          <button type="button" onClick={() => { setType('expense'); setCategory(''); }}
+          <button type="button" onClick={() => { setType('expense'); setCategory(''); setBudgetCategory('other'); setInvoicePlanId(''); }}
             className={`flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-all ${type === 'expense' ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
             <ArrowDownRight className="w-4 h-4" /> 支出
           </button>
@@ -272,15 +286,53 @@ function TransactionFormModal({
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Select label="分类" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <Select label="分类" value={category} onChange={(e) => {
+            const next = e.target.value;
+            setCategory(next);
+            if (type === 'expense') setBudgetCategory(suggestedBudgetCategory(next));
+          }}>
             <option value="">选择分类…</option>
             {categories.map((item) => <option key={item} value={item}>{item}</option>)}
           </Select>
-          <Select label="项目（可选）" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+          <Select label="项目（可选）" value={projectId} onChange={(e) => {
+            setProjectId(e.target.value);
+            setInvoicePlanId('');
+          }}>
             <option value="">不关联项目</option>
             {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
           </Select>
         </div>
+
+        {type === 'expense' ? (
+          <div className="space-y-1.5">
+            <Select label="预算分类" value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value as BudgetCategory)}>
+              {(Object.keys(BUDGET_CATEGORY_LABELS) as BudgetCategory[]).map((item) => (
+                <option key={item} value={item}>{BUDGET_CATEGORY_LABELS[item]}</option>
+              ))}
+            </Select>
+            <p className="text-xs text-slate-400">用于统计人力、差旅、其他预算的实际执行情况。</p>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            <Select
+              label="关联回款节点（可选）"
+              value={invoicePlanId}
+              onChange={(e) => setInvoicePlanId(e.target.value)}
+              disabled={!projectId}
+            >
+              <option value="">{projectId ? '不关联回款节点' : '请先选择项目'}</option>
+              {projectPlans.map((plan) => (
+                <option key={plan.id} value={plan.id}>
+                  {plan.stage} · {plan.percentage}% · {formatCurrency(plan.percentage / 100 * (selectedProject?.revenue || 0))}
+                </option>
+              ))}
+              {currentPlanMissing && (
+                <option value={invoicePlanId}>当前关联节点（不可用）</option>
+              )}
+            </Select>
+            <p className="text-xs text-slate-400">关联后，回款节点会根据该收入自动计算已收金额和状态。</p>
+          </div>
+        )}
 
         <Textarea label="说明" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="可填写备注…" />
 
@@ -304,6 +356,7 @@ interface ImportRow {
   date: string;
   projectName: string;
   projectId: string | null;
+  budgetCategory: BudgetCategory | null;
   error: string | null;
 }
 
@@ -321,7 +374,7 @@ function TransactionImportModal({
   const [hasParsed, setHasParsed] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
 
-  const TEMPLATE_HEADERS = ['类型', '日期', '分类', '描述', '金额', '项目'];
+  const TEMPLATE_HEADERS = ['类型', '日期', '分类', '描述', '金额', '项目', '预算分类'];
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -349,6 +402,9 @@ function TransactionImportModal({
       const description = getFieldAny(row.values, result.headers, ['描述', '说明', 'Description']);
       const amountStr = getFieldAny(row.values, result.headers, ['金额', 'Amount']);
       const projectName = getFieldAny(row.values, result.headers, ['项目', 'Project']);
+      const budgetStr = getFieldAny(row.values, result.headers, ['预算分类', 'Budget Category', 'BudgetCategory'])
+        .trim()
+        .toLowerCase();
 
       const errors: string[] = [];
       const type: TransactionType =
@@ -363,6 +419,26 @@ function TransactionImportModal({
       const amount = parseFloat(amountStr);
       if (!Number.isFinite(amount) || amount <= 0) errors.push('金额必须大于 0');
       if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) errors.push('日期格式应为 YYYY-MM-DD');
+      const budgetAliases: Record<string, BudgetCategory> = {
+        人力: 'labor',
+        人力预算: 'labor',
+        labor: 'labor',
+        差旅: 'travel',
+        差旅预算: 'travel',
+        travel: 'travel',
+        其他: 'other',
+        其他预算: 'other',
+        other: 'other',
+      };
+      let budgetCategory: BudgetCategory | null = null;
+      if (type === 'expense') {
+        if (budgetStr && !budgetAliases[budgetStr]) {
+          errors.push('预算分类必须为“人力”“差旅”或“其他”');
+        }
+        budgetCategory = budgetAliases[budgetStr] || suggestedBudgetCategory(category);
+      } else if (budgetStr) {
+        errors.push('收入记录不能填写预算分类');
+      }
 
       let projectId: string | null = null;
       if (projectName) {
@@ -380,6 +456,7 @@ function TransactionImportModal({
         date: dateStr,
         projectName,
         projectId,
+        budgetCategory,
         error: errors.length > 0 ? errors.join('；') : null,
       };
     });
@@ -404,6 +481,8 @@ function TransactionImportModal({
         transaction_date: row.date,
         project_id: row.projectId,
         created_by: userId,
+        budget_category: row.type === 'expense' ? row.budgetCategory : null,
+        invoice_plan_id: null,
       });
       if (created) imported++;
       else failed++;
@@ -422,8 +501,8 @@ function TransactionImportModal({
       TEMPLATE_HEADERS,
       'transactions-template.csv',
       [
-        ['收入', sampleDate, INCOME_CATEGORIES[0], '示例收入', '25000', sampleProject],
-        ['支出', sampleDate, EXPENSE_CATEGORIES[0], '示例支出', '15000', sampleProject],
+        ['收入', sampleDate, INCOME_CATEGORIES[0], '示例收入', '25000', sampleProject, ''],
+        ['支出', sampleDate, EXPENSE_CATEGORIES[0], '示例支出', '15000', sampleProject, '人力'],
       ],
     );
   }
@@ -452,10 +531,10 @@ function TransactionImportModal({
       ) : (
         <div className="space-y-4">
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
-            上传包含以下列的 CSV 文件：<span className="font-semibold">类型、日期、分类、描述、金额、项目</span>。
-            类型填写“收入”或“支出”；项目需与现有项目名称一致，留空表示不关联项目。
+            上传包含以下列的 CSV 文件：<span className="font-semibold">类型、日期、分类、描述、金额、项目、预算分类</span>。
+            类型填写“收入”或“支出”；项目需与现有项目名称一致，留空表示不关联项目。支出记录的预算分类填写“人力”“差旅”或“其他”，留空时按分类自动推断。
             <br />
-            <span className="text-xs text-blue-600">兼容旧模板的表头：Type、Date、Category、Description、Amount、Project。</span>
+            <span className="text-xs text-blue-600">兼容旧模板的表头：Type、Date、Category、Description、Amount、Project、Budget Category。</span>
           </div>
 
           <div className="flex items-center gap-3">

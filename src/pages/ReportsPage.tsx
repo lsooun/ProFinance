@@ -3,8 +3,9 @@ import { Card, Button, Badge, Select } from '@/components/ui';
 import { formatCurrency, formatCurrencyDetailed, formatHours, formatDate } from '@/lib/format';
 import type { Transaction, Project, Person, TimesheetEntry, InvoicePlan, InvoiceStatus } from '@/types';
 import {
-  PERSON_ROLE_LABELS, INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS,
+  PERSON_ROLE_LABELS, INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS, BUDGET_CATEGORY_LABELS,
 } from '@/types';
+import { effectiveInvoiceStatus, invoiceAmount } from '@/lib/finance';
 import {
   getTransactions, getProjects, getPersons, getTimesheets,
   getProjectPlannedHours, getAllInvoicePlans,
@@ -140,8 +141,9 @@ export default function ReportsPage() {
       projectName: project?.name || '未知项目',
       stage: plan.stage,
       percentage: plan.percentage,
-      amount: (plan.percentage / 100) * (project?.revenue || 0),
-      status: plan.status,
+      amount: invoiceAmount(plan, project?.revenue || 0),
+      paid: plan.paid_amount ?? 0,
+      status: effectiveInvoiceStatus(plan, project?.revenue || 0),
     };
   }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
@@ -152,13 +154,14 @@ export default function ReportsPage() {
     invoiceStatusAmounts[invoice.status] += invoice.amount;
   });
   const totalInvoiceAmount = invoiceReportData.reduce((sum, invoice) => sum + invoice.amount, 0);
+  const totalInvoicePaid = invoiceReportData.reduce((sum, invoice) => sum + invoice.paid, 0);
 
   function exportCSV() {
     if (tab === 'financial') {
       if (periodTx.length === 0) return;
       downloadCSV(
         `财务明细-${periodLabel}.csv`,
-        ['日期', '类型', '分类', '说明', '金额', '项目'],
+        ['日期', '类型', '分类', '说明', '金额', '项目', '预算分类'],
         periodTx.map((tx) => [
           tx.transaction_date,
           tx.type === 'income' ? '收入' : '支出',
@@ -166,6 +169,7 @@ export default function ReportsPage() {
           tx.description || '',
           tx.amount,
           projects.find((project) => project.id === tx.project_id)?.name || '',
+          tx.budget_category ? BUDGET_CATEGORY_LABELS[tx.budget_category] : '',
         ]),
       );
       return;
@@ -188,13 +192,14 @@ export default function ReportsPage() {
     if (invoiceReportData.length === 0) return;
     downloadCSV(
       `回款计划-${periodLabel}.csv`,
-      ['日期', '项目', '回款节点', '比例(%)', '金额', '状态'],
+      ['日期', '项目', '回款节点', '比例(%)', '金额', '已收金额', '状态'],
       invoiceReportData.map((invoice) => [
         invoice.date,
         invoice.projectName,
         invoice.stage,
         invoice.percentage,
         invoice.amount,
+        invoice.paid,
         INVOICE_STATUS_LABELS[invoice.status],
       ]),
     );
@@ -452,6 +457,7 @@ export default function ReportsPage() {
                       <th className="pb-2 font-medium">回款节点</th>
                       <th className="pb-2 font-medium text-right">比例</th>
                       <th className="pb-2 font-medium text-right">金额</th>
+                      <th className="pb-2 font-medium text-right">已收</th>
                       <th className="pb-2 font-medium">状态</th>
                     </tr>
                   </thead>
@@ -463,7 +469,13 @@ export default function ReportsPage() {
                         <td className="py-2.5 text-slate-600">{invoice.stage}</td>
                         <td className="py-2.5 text-right text-slate-600">{invoice.percentage}%</td>
                         <td className="py-2.5 text-right font-semibold text-slate-900 whitespace-nowrap">{formatCurrency(invoice.amount)}</td>
-                        <td className="py-2.5"><Badge className={INVOICE_STATUS_COLORS[invoice.status]}>{INVOICE_STATUS_LABELS[invoice.status]}</Badge></td>
+                        <td className="py-2.5 text-right text-emerald-700 whitespace-nowrap">{formatCurrency(invoice.paid)}</td>
+                        <td className="py-2.5">
+                          <div className="flex flex-col items-start gap-0.5">
+                            <Badge className={INVOICE_STATUS_COLORS[invoice.status]}>{INVOICE_STATUS_LABELS[invoice.status]}</Badge>
+                            {invoice.paid > 0 && <span className="text-[10px] text-slate-400">自动对账</span>}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -472,6 +484,7 @@ export default function ReportsPage() {
                       <td colSpan={3} className="py-3 font-semibold text-slate-900">合计</td>
                       <td className="py-3 text-right font-semibold text-slate-600">—</td>
                       <td className="py-3 text-right font-semibold text-slate-900">{formatCurrency(totalInvoiceAmount)}</td>
+                      <td className="py-3 text-right font-semibold text-emerald-700">{formatCurrency(totalInvoicePaid)}</td>
                       <td />
                     </tr>
                   </tfoot>

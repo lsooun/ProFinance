@@ -15,6 +15,7 @@ import {
   UserCog,
   Clock,
   KeyRound,
+  UserRound,
 } from 'lucide-react';
 import { USER_ROLE_LABELS } from '@/types';
 import type { PageKey } from '@/lib/router';
@@ -50,6 +51,7 @@ export default function AppLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [passwordModalOpen, setPasswordModalOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
 
   const visibleItems = NAV_ITEMS.filter((item) => {
     if (item.adminOnly && profile?.role !== 'admin') return false;
@@ -169,6 +171,16 @@ export default function AppLayout({
                   <button
                     onClick={() => {
                       setUserMenuOpen(false);
+                      setProfileModalOpen(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    <UserRound className="w-4 h-4" />
+                    个人资料
+                  </button>
+                  <button
+                    onClick={() => {
+                      setUserMenuOpen(false);
                       setPasswordModalOpen(true);
                     }}
                     className="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
@@ -194,6 +206,10 @@ export default function AppLayout({
 
         <main className="flex-1 p-4 lg:p-8 overflow-x-hidden">{children}</main>
       </div>
+
+      {profileModalOpen && (
+        <ProfileModal onClose={() => setProfileModalOpen(false)} />
+      )}
 
       {passwordModalOpen && (
         <PasswordModal onClose={() => setPasswordModalOpen(false)} />
@@ -264,6 +280,57 @@ function PasswordModal({ onClose }: { onClose: () => void }) {
         {error && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
         <div className="flex justify-end gap-3 pt-2">
           <Button type="button" variant="outline" onClick={onClose}>取消</Button>
+          <Button type="submit" disabled={saving}>{saving ? '保存中…' : '保存'}</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ProfileModal({ onClose }: { onClose: () => void }) {
+  const { profile, updateProfile } = useAuth();
+  const [fullName, setFullName] = useState(profile?.full_name || '');
+  const [email, setEmail] = useState(profile?.email || '');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (!fullName.trim()) {
+      setError('姓名不能为空');
+      return;
+    }
+    setSaving(true);
+    const result = await updateProfile(fullName.trim(), email.trim());
+    setSaving(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    onClose();
+  }
+
+  return (
+    <Modal open onClose={onClose} title="个人资料" size="sm">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Input
+          label="姓名"
+          required
+          value={fullName}
+          onChange={(event) => setFullName(event.target.value)}
+        />
+        <Input
+          label="登录邮箱"
+          type="email"
+          required
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+        <p className="text-xs text-slate-500">修改邮箱后，下次登录请使用新邮箱。</p>
+        {error && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
+        <div className="flex justify-end gap-3 pt-2">
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
           <Button type="submit" disabled={saving}>{saving ? '保存中…' : '保存'}</Button>
         </div>
       </form>

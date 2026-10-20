@@ -12,11 +12,13 @@ import ReportsPage from '@/pages/ReportsPage';
 import UsersPage from '@/pages/UsersPage';
 import PersonnelPage from '@/pages/PersonnelPage';
 import TimesheetPage from '@/pages/TimesheetPage';
-import { pathFor, useHashRoute } from '@/lib/router';
+import ResetPasswordPage from '@/pages/ResetPasswordPage';
+import { getResetTokenFromHash, pathFor, useHashRoute } from '@/lib/router';
 
 function AppContent() {
   const { user, profile, signOut, loading } = useAuth();
   const { route, navigate } = useHashRoute();
+  const resetToken = getResetTokenFromHash(window.location.hash);
 
   const isManagerUp = profile?.role === 'admin' || profile?.role === 'manager';
 
@@ -38,6 +40,10 @@ function AppContent() {
         </div>
       </div>
     );
+  }
+
+  if (resetToken) {
+    return <ResetPasswordPage token={resetToken} />;
   }
 
   if (!user || !profile) {

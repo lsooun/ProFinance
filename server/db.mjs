@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  used_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -92,6 +101,8 @@ CREATE TABLE IF NOT EXISTS transactions (
   amount REAL NOT NULL DEFAULT 0 CHECK (amount >= 0),
   transaction_date TEXT NOT NULL,
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  budget_category TEXT,
+  invoice_plan_id TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date);
@@ -166,8 +177,8 @@ function seedDatabase(db) {
     'INSERT INTO project_assignments (id, project_id, person_id, planned_hours, created_at) VALUES (?, ?, ?, ?, ?)'
   );
   const insertTransaction = db.prepare(
-    `INSERT INTO transactions (id, project_id, type, category, description, amount, transaction_date, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO transactions (id, project_id, type, category, description, amount, transaction_date, created_by, budget_category, invoice_plan_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const insertTimesheet = db.prepare(
     'INSERT INTO timesheets (id, project_id, person_id, date, hours, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -229,9 +240,18 @@ function seedDatabase(db) {
       [projectIds[2], 'expense', '工资', '云工程师工资', 30000, monthDate(2, 10)],
       [null, 'expense', '办公', '办公室租金', 5000, monthDate(0, 5)],
       [null, 'expense', '办公', '办公室租金', 5000, monthDate(1, 5)],
-    ].forEach(([projectId, type, category, description, amount, date]) =>
-      insertTransaction.run(randomUUID(), projectId, type, category, description, amount, date, null, now)
-    );
+    ].forEach(([projectId, type, category, description, amount, date]) => {
+      const budgetCategory = type === 'expense'
+        ? category === '工资'
+          ? 'labor'
+          : category === '差旅'
+            ? 'travel'
+            : 'other'
+        : null;
+      insertTransaction.run(
+        randomUUID(), projectId, type, category, description, amount, date, null, budgetCategory, null, now
+      );
+    });
 
     [
       [projectIds[0], personIds[0], monthDate(0, 18), 8, '项目启动与规划'],
@@ -278,6 +298,23 @@ function migrateDatabase(db) {
     `);
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_projects_manager_user ON projects(manager_user_id)');
+
+  const transactionColumns = db.prepare('PRAGMA table_info(transactions)').all().map((column) => column.name);
+  if (!transactionColumns.includes('budget_category')) {
+    db.exec('ALTER TABLE transactions ADD COLUMN budget_category TEXT');
+  }
+  if (!transactionColumns.includes('invoice_plan_id')) {
+    db.exec('ALTER TABLE transactions ADD COLUMN invoice_plan_id TEXT');
+  }
+  db.exec(`
+    UPDATE transactions
+    SET budget_category = CASE
+      WHEN category IN ('工资', 'Salary') THEN 'labor'
+      WHEN category IN ('差旅', 'Travel') THEN 'travel'
+      ELSE 'other'
+    END
+    WHERE type = 'expense' AND budget_category IS NULL
+  `);
 }
 
 export function openDatabase(dbPath) {
