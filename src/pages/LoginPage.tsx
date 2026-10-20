@@ -3,16 +3,21 @@ import { useAuth } from '@/context/auth-context';
 import { Button } from '@/components/ui';
 import { Briefcase, Lock, Mail, Eye, EyeOff } from 'lucide-react';
 
-const DEMO_ACCOUNTS = [
-  { role: '管理员', email: 'admin@company.com' },
-  { role: '项目经理', email: 'manager@company.com' },
-  { role: '普通员工', email: 'wang.lei@company.com' },
-];
+// 仅开发模式展示演示账号；生产构建会被 Vite 静态移除
+const SHOW_DEMO_ACCOUNTS = import.meta.env.DEV;
+const DEMO_PASSWORD = '123456';
+const DEMO_ACCOUNTS = SHOW_DEMO_ACCOUNTS
+  ? [
+      { role: '管理员', email: 'admin@company.com' },
+      { role: '项目经理', email: 'manager@company.com' },
+      { role: '普通员工', email: 'wang.lei@company.com' },
+    ]
+  : [];
 
 export default function LoginPage() {
   const { signIn } = useAuth();
-  const [email, setEmail] = useState('admin@company.com');
-  const [password, setPassword] = useState('123456');
+  const [email, setEmail] = useState(SHOW_DEMO_ACCOUNTS ? 'admin@company.com' : '');
+  const [password, setPassword] = useState(SHOW_DEMO_ACCOUNTS ? DEMO_PASSWORD : '');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -131,26 +136,28 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          <div className="mt-6 rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
-            <p className="text-xs font-semibold text-blue-700 mb-2">演示账号（密码均为 123456）</p>
-            <div className="space-y-1">
-              {DEMO_ACCOUNTS.map((account) => (
-                <button
-                  key={account.email}
-                  type="button"
-                  onClick={() => {
-                    setEmail(account.email);
-                    setPassword('123456');
-                    setError(null);
-                  }}
-                  className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left text-xs text-blue-700 hover:bg-blue-100/60"
-                >
-                  <span className="text-blue-500">{account.role}</span>
-                  <span className="font-mono">{account.email}</span>
-                </button>
-              ))}
+          {SHOW_DEMO_ACCOUNTS && (
+            <div className="mt-6 rounded-lg bg-blue-50 border border-blue-100 px-4 py-3">
+              <p className="text-xs font-semibold text-blue-700 mb-2">演示账号（密码均为 123456）</p>
+              <div className="space-y-1">
+                {DEMO_ACCOUNTS.map((account) => (
+                  <button
+                    key={account.email}
+                    type="button"
+                    onClick={() => {
+                      setEmail(account.email);
+                      setPassword(DEMO_PASSWORD);
+                      setError(null);
+                    }}
+                    className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-left text-xs text-blue-700 hover:bg-blue-100/60"
+                  >
+                    <span className="text-blue-500">{account.role}</span>
+                    <span className="font-mono">{account.email}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
