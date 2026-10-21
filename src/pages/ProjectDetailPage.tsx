@@ -135,6 +135,7 @@ export default function ProjectDetailPage({
   }
 
   const financials = projectFinancials(project, transactions);
+  const costSheet = project.cost_sheet;
   const budgetActualsByCategory = budgetActuals(transactions);
   const budgetCards = [
     { key: 'labor', label: '人力预算', budget: project.budget_labor, actual: budgetActualsByCategory.labor },
@@ -307,21 +308,23 @@ export default function ProjectDetailPage({
           </Card>
 
 
-          {project.cost_sheet && (
+          {costSheet && (
             <Card className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <FileSpreadsheet className="w-5 h-5 text-blue-500" />
-                <h3 className="text-base font-semibold text-slate-900">Cost Sheet 分析</h3>
-                <span className="text-xs text-slate-400 truncate">{project.cost_sheet.source_file_name}</span>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-blue-500" />
+                  <h3 className="text-base font-semibold text-slate-900">Cost Sheet 分析</h3>
+                </div>
+                <span className="text-xs text-slate-400">按项目费用明细自动计算</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 {[
-                  { label: '合同总额（含税）', value: formatCurrency(project.cost_sheet.total_contract_with_tax) },
-                  { label: '净收入（不含税）', value: formatCurrency(project.cost_sheet.total_revenue_without_tax) },
-                  { label: '总成本', value: formatCurrency(project.cost_sheet.total_cost) },
-                  { label: '毛利', value: `${formatCurrency(project.cost_sheet.gross_margin)}（${(project.cost_sheet.gross_margin_pct * 100).toFixed(1)}%）` },
-                  { label: '审批利润', value: `${formatCurrency(project.cost_sheet.approval_margin)}（${(project.cost_sheet.approval_margin_pct * 100).toFixed(1)}%）` },
-                  { label: '人天', value: `${project.cost_sheet.person_days}` },
+                  { label: '合同总额（含税）', value: formatCurrency(costSheet.total_contract_with_tax ?? 0) },
+                  { label: '净收入（不含税）', value: formatCurrency(costSheet.total_revenue_without_tax ?? 0) },
+                  { label: '总成本', value: formatCurrency(costSheet.total_cost ?? 0) },
+                  { label: '项目利润', value: `${formatCurrency(costSheet.gross_margin ?? 0)}（${((costSheet.gross_margin_pct ?? 0) * 100).toFixed(1)}%）` },
+                  { label: '审批利润', value: `${formatCurrency(costSheet.approval_margin ?? 0)}（${((costSheet.approval_margin_pct ?? 0) * 100).toFixed(1)}%）` },
+                  { label: '人力费用', value: formatCurrency(costSheet.manpower_cost ?? 0) },
                 ].map((item) => (
                   <div key={item.label} className="rounded-lg bg-slate-50 px-3 py-2.5">
                     <p className="text-[11px] text-slate-500">{item.label}</p>
@@ -329,17 +332,44 @@ export default function ProjectDetailPage({
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-sm">
-                <div><p className="text-xs text-slate-500">人力成本</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.manpower_cost)}</p></div>
-                <div><p className="text-xs text-slate-500">差旅成本</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.travel_cost)}</p></div>
-                <div><p className="text-xs text-slate-500">其他费用</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.other_expense)}</p></div>
-                <div><p className="text-xs text-slate-500">外包成本</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.outsourcing_cost)}</p></div>
+              <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50">
+                    <tr className="text-left text-slate-500 border-b border-slate-200">
+                      <th className="px-3 py-2 font-medium">明细类别</th>
+                      <th className="px-3 py-2 font-medium text-right">金额 / 比例</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td colSpan={2} className="px-3 py-1.5 bg-blue-50/60 font-semibold text-blue-900">合同与收入</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">硬件和软件合同金额（含税 13%）</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.hardware_contract_with_tax ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">服务合同金额（含税 6%）</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.service_contract_with_tax ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100 bg-slate-50/60"><td className="px-3 py-1.5 font-medium text-slate-800">合同总金额（TCV）</td><td className="px-3 py-1.5 text-right font-semibold text-slate-900">{formatCurrency(costSheet.total_contract_with_tax ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">硬件和软件收入（不含 13% 税）</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.hardware_revenue_without_tax ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">服务收入（不含 6% 税）</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.service_revenue_without_tax ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100 bg-slate-50/60"><td className="px-3 py-1.5 font-medium text-slate-800">合计收入</td><td className="px-3 py-1.5 text-right font-semibold text-slate-900">{formatCurrency(costSheet.total_revenue_without_tax ?? 0)}</td></tr>
+                    <tr><td colSpan={2} className="px-3 py-1.5 bg-blue-50/60 font-semibold text-blue-900">成本</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">硬件和软件成本（不含税）</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.hardware_cost ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">服务成本（不含税）</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.service_cost ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">第三方服务 / 外包成本</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.outsourcing_cost ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">人力费用</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.manpower_cost ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">其他费用（含差旅 {formatCurrency(costSheet.travel_cost ?? 0)}）</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.other_expense ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">预提税</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.withholding_tax ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100 bg-slate-50/60"><td className="px-3 py-1.5 font-medium text-slate-800">合计成本</td><td className="px-3 py-1.5 text-right font-semibold text-slate-900">{formatCurrency(costSheet.total_cost ?? 0)}</td></tr>
+                    <tr><td colSpan={2} className="px-3 py-1.5 bg-blue-50/60 font-semibold text-blue-900">利润与风险</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">项目利润 / 利润率</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.gross_margin ?? 0)} / {((costSheet.gross_margin_pct ?? 0) * 100).toFixed(2)}%</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">第三方风险金 / 人力风险金</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.contingency_outsourcing ?? 0)} / {formatCurrency(costSheet.contingency_manpower ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">其他风险 / 财务利息</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.other_risk ?? 0)} / {formatCurrency(costSheet.financial_interest ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100"><td className="px-3 py-1.5 text-slate-600">附加税 13% / 6%</td><td className="px-3 py-1.5 text-right text-slate-900">{formatCurrency(costSheet.surcharge_tax_hardware ?? 0)} / {formatCurrency(costSheet.surcharge_tax_service ?? 0)}</td></tr>
+                    <tr className="border-b border-slate-100 bg-slate-50/60"><td className="px-3 py-1.5 font-medium text-slate-800">项目审批利润 / 利润率</td><td className="px-3 py-1.5 text-right font-semibold text-slate-900">{formatCurrency(costSheet.approval_margin ?? 0)} / {((costSheet.approval_margin_pct ?? 0) * 100).toFixed(2)}%</td></tr>
+                  </tbody>
+                </table>
               </div>
-              {project.cost_sheet.payment_milestones.length > 0 && (
+              {costSheet.payment_milestones && costSheet.payment_milestones.length > 0 && (
                 <div className="mt-4 rounded-lg border border-slate-200 p-3">
                   <p className="text-xs font-medium text-slate-600 mb-2">付款节点</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
-                    {project.cost_sheet.payment_milestones.map((item) => (
+                    {costSheet.payment_milestones.map((item) => (
                       <div key={item.stage} className="rounded bg-slate-50 px-2.5 py-2">
                         <p className="text-xs font-medium text-slate-800">{item.stage}</p>
                         <p className="text-[11px] text-slate-500 mt-0.5">{item.percentage}% · {formatCurrency(item.amount)}</p>
@@ -348,9 +378,9 @@ export default function ProjectDetailPage({
                   </div>
                 </div>
               )}
-              {project.cost_sheet.warnings.length > 0 && (
+              {costSheet.warnings && costSheet.warnings.length > 0 && (
                 <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-                  {project.cost_sheet.warnings.map((warning) => <p key={warning}>• {warning}</p>)}
+                  {costSheet.warnings.map((warning) => <p key={warning}>• {warning}</p>)}
                 </div>
               )}
             </Card>

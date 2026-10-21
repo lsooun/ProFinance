@@ -28,33 +28,42 @@ export interface CostSheetMilestone {
 }
 
 export interface CostSheetData {
-  source_file_name: string;
-  parsed_at: string;
-  customer_name: string;
-  project_description: string;
-  project_start_date: string | null;
-  person_days: number;
-  service_contract_with_tax: number;
-  service_revenue_without_tax: number;
+  updated_at: string;
   hardware_contract_with_tax: number;
+  service_contract_with_tax: number;
   total_contract_with_tax: number;
+  hardware_revenue_without_tax: number;
+  service_revenue_without_tax: number;
   total_revenue_without_tax: number;
-  manpower_cost: number;
-  travel_cost: number;
-  other_expense: number;
-  outsourcing_cost: number;
+  hardware_cost: number;
   service_cost: number;
+  outsourcing_cost: number;
+  manpower_cost: number;
+  other_expense: number;
+  travel_cost: number;
   withholding_tax: number;
   total_cost: number;
   gross_margin: number;
   gross_margin_pct: number;
-  contingency_manpower: number;
+  contingency_outsourcing_pct: number;
+  contingency_manpower_pct: number;
   contingency_outsourcing: number;
+  contingency_manpower: number;
   other_risk: number;
+  surcharge_tax_hardware: number;
+  surcharge_tax_service: number;
+  financial_interest: number;
   approval_margin: number;
   approval_margin_pct: number;
-  payment_milestones: CostSheetMilestone[];
-  warnings: string[];
+  // 兼容早期 Excel 解析版本的数据
+  source_file_name?: string;
+  parsed_at?: string;
+  customer_name?: string;
+  project_description?: string;
+  project_start_date?: string | null;
+  person_days?: number;
+  payment_milestones?: CostSheetMilestone[];
+  warnings?: string[];
 }
 
 export interface Project {

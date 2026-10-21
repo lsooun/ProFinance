@@ -6,23 +6,25 @@ import {
   formatCurrency, formatHours, formatDate,
 } from '@/lib/format';
 import { projectFinancials, projectFinancialsFromAggregates } from '@/lib/finance';
-import { costSheetToProjectFields, parseCostSheet } from '@/lib/costSheet';
+import {
+  calculateCostSheet, costSheetInputsFromData, costSheetToProjectFields,
+  type CostSheetInputs,
+} from '@/lib/costSheet';
 import {
   STATUS_LABELS, STATUS_COLORS, STATUS_DOT_COLORS,
-  type CostSheetData, type ManagerOption, type Project, type ProjectStatus,
+  type ManagerOption, type Project, type ProjectStatus,
 } from '@/types';
 import {
   getProjects, createProject, updateProject, deleteProject,
   getProjectActualHours, getProjectPlannedHours,
   getManagerOptions, getAccessibleProjects, getTransactionsByProject,
-  getAssignmentsByProject, getTimesheetsByProject, createAttachment,
+  getAssignmentsByProject, getTimesheetsByProject,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
 import {
   Plus, FolderKanban, Search, Pencil, Trash2, Filter, X,
-  DollarSign, TrendingUp, AlertCircle, Clock, Briefcase, Upload, FileSpreadsheet, RefreshCw,
+  DollarSign, TrendingUp, AlertCircle, Clock, Briefcase, Calculator,
 } from 'lucide-react';
-import { notify } from '@/lib/notify';
 
 const ALL_STATUSES: ProjectStatus[] = ['presales', 'in_progress', 'completed', 'cancelled'];
 
@@ -335,18 +337,6 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
   );
 }
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      resolve(result.includes(',') ? result.split(',')[1] : result);
-    };
-    reader.onerror = () => reject(new Error('读取文件失败'));
-    reader.readAsDataURL(file);
-  });
-}
-
 function ProjectFormModal({
   open, onClose, project, managerOptions, currentUserId, currentUserRole, onSaved,
 }: {
@@ -358,7 +348,6 @@ function ProjectFormModal({
   currentUserRole: 'admin' | 'manager' | 'employee';
   onSaved: () => void;
 }) {
-  const isEditing = Boolean(project);
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
   const [status, setStatus] = useState<ProjectStatus>(project?.status || 'presales');
@@ -372,47 +361,31 @@ function ProjectFormModal({
   const [budgetTravel, setBudgetTravel] = useState(project?.budget_travel?.toString() || '0');
   const [budgetOther, setBudgetOther] = useState(project?.budget_other?.toString() || '0');
   const [revenue, setRevenue] = useState(project?.revenue?.toString() || '0');
-  const [costSheet, setCostSheet] = useState<CostSheetData | null>(project?.cost_sheet ?? null);
-  const [costSheetFile, setCostSheetFile] = useState<File | null>(null);
-  const [parsing, setParsing] = useState(false);
-  const [costSheetError, setCostSheetError] = useState<string | null>(null);
+  const [useCostSheet, setUseCostSheet] = useState(project ? Boolean(project.cost_sheet) : true);
+  const [costInputs, setCostInputs] = useState<CostSheetInputs>(() => costSheetInputsFromData(project?.cost_sheet));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const totalBudget = (parseFloat(budgetLabor) || 0) + (parseFloat(budgetTravel) || 0) + (parseFloat(budgetOther) || 0);
+  const computedCostSheet = calculateCostSheet(costInputs);
+  const derived = costSheetToProjectFields(computedCostSheet);
+  const manualBudget = (parseFloat(budgetLabor) || 0) + (parseFloat(budgetTravel) || 0) + (parseFloat(budgetOther) || 0);
+  const totalBudget = useCostSheet
+    ? derived.budget_labor + derived.budget_travel + derived.budget_other
+    : manualBudget;
 
-  async function handleCostSheetFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setCostSheetError(null);
-    setError(null);
-    if (!/\.(xlsx|xls)$/i.test(file.name)) {
-      setCostSheetError('Cost Sheet 仅支持 Excel 文件（.xlsx / .xls）。');
-      return;
+  function setCostField<K extends keyof CostSheetInputs>(key: K, value: string) {
+    const parsed = value === '' ? 0 : Number(value);
+    setCostInputs((previous) => ({ ...previous, [key]: Number.isFinite(parsed) ? parsed : 0 }));
+  }
+
+  function handleUseCostSheetChange(checked: boolean) {
+    if (!checked) {
+      setBudgetLabor(String(derived.budget_labor));
+      setBudgetTravel(String(derived.budget_travel));
+      setBudgetOther(String(derived.budget_other));
+      setRevenue(String(derived.revenue));
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setCostSheetError('Cost Sheet 文件不能超过 10 MB。');
-      return;
-    }
-    setParsing(true);
-    try {
-      const parsed = await parseCostSheet(await file.arrayBuffer(), file.name);
-      const fields = costSheetToProjectFields(parsed);
-      setCostSheet(parsed);
-      setCostSheetFile(file);
-      setBudgetLabor(String(Math.round(fields.budget_labor * 100) / 100));
-      setBudgetTravel(String(Math.round(fields.budget_travel * 100) / 100));
-      setBudgetOther(String(Math.round(fields.budget_other * 100) / 100));
-      setRevenue(String(Math.round(fields.revenue * 100) / 100));
-      if (parsed.customer_name) setClient(parsed.customer_name);
-      if (parsed.project_description) setDescription(parsed.project_description);
-      if (parsed.project_start_date) setStartDate(parsed.project_start_date);
-    } catch (err) {
-      setCostSheetError(err instanceof Error ? err.message : 'Cost Sheet 解析失败，请检查文件结构。');
-    } finally {
-      setParsing(false);
-    }
+    setUseCostSheet(checked);
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -428,107 +401,46 @@ function ProjectFormModal({
       client,
       start_date: startDate || null,
       end_date: endDate || null,
-      budget_labor: parseFloat(budgetLabor) || 0,
-      budget_travel: parseFloat(budgetTravel) || 0,
-      budget_other: parseFloat(budgetOther) || 0,
-      revenue: parseFloat(revenue) || 0,
-      cost_sheet: !isEditing ? costSheet : undefined,
+      budget_labor: useCostSheet ? derived.budget_labor : parseFloat(budgetLabor) || 0,
+      budget_travel: useCostSheet ? derived.budget_travel : parseFloat(budgetTravel) || 0,
+      budget_other: useCostSheet ? derived.budget_other : parseFloat(budgetOther) || 0,
+      revenue: useCostSheet ? derived.revenue : parseFloat(revenue) || 0,
+      cost_sheet: useCostSheet ? computedCostSheet : null,
     };
     const saved = project ? await updateProject(project.id, payload) : await createProject(payload);
-    if (!saved) {
-      setSaving(false);
-      return;
-    }
-    if (!project && costSheetFile) {
-      try {
-        const dataBase64 = await fileToBase64(costSheetFile);
-        const type = costSheetFile.type || (costSheetFile.name.toLowerCase().endsWith('.xls')
-          ? 'application/vnd.ms-excel'
-          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        const attachment = await createAttachment({
-          project_id: saved.id,
-          file_name: costSheetFile.name,
-          file_type: type,
-          file_size: costSheetFile.size,
-          category: 'cost_sheet',
-          data_base64: dataBase64,
-        });
-        if (!attachment) notify('项目已创建，但 Cost Sheet 附件上传失败，请在项目附件中重新上传。', 'error');
-      } catch {
-        notify('项目已创建，但 Cost Sheet 附件上传失败，请在项目附件中重新上传。', 'error');
-      }
-    }
     setSaving(false);
-    onSaved();
+    if (saved) onSaved();
   }
 
-  const metrics = costSheet ? [
-    { label: '合同总额（含税）', value: formatCurrency(costSheet.total_contract_with_tax) },
-    { label: '净收入（不含税）', value: formatCurrency(costSheet.total_revenue_without_tax) },
-    { label: '总成本', value: formatCurrency(costSheet.total_cost) },
-    { label: '人力成本', value: formatCurrency(costSheet.manpower_cost) },
-    { label: '差旅成本', value: formatCurrency(costSheet.travel_cost) },
-    { label: '毛利率', value: `${(costSheet.gross_margin_pct * 100).toFixed(1)}%` },
-    { label: '审批利润', value: formatCurrency(costSheet.approval_margin) },
-    { label: '人天', value: `${costSheet.person_days}` },
-  ] : [];
+  const moneyInput = (key: keyof CostSheetInputs, label: string, note: string) => (
+    <tr key={key} className="border-b border-slate-100 last:border-0">
+      <td className="py-1.5 pr-3 text-slate-700">{label}</td>
+      <td className="py-1.5 px-2 text-right">
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={costInputs[key] as number}
+          onChange={(e) => setCostField(key, e.target.value)}
+          className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+          aria-label={label}
+        />
+      </td>
+      <td className="py-1.5 pl-3 text-[11px] text-slate-400">{note}</td>
+    </tr>
+  );
+
+  const computedRow = (label: string, value: string, note: string) => (
+    <tr key={label} className="border-b border-slate-100 last:border-0 bg-slate-50/60">
+      <td className="py-1.5 pr-3 font-medium text-slate-800">{label}</td>
+      <td className="py-1.5 px-2 text-right font-semibold text-slate-900">{value}</td>
+      <td className="py-1.5 pl-3 text-[11px] text-slate-400">{note}</td>
+    </tr>
+  );
 
   return (
     <Modal open={open} onClose={onClose} title={project ? '编辑项目' : '新建项目'} size="lg">
       <form onSubmit={handleSave} className="space-y-4">
-        {!project && (
-          <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2 text-sm font-semibold text-blue-900">
-                  <FileSpreadsheet className="w-4 h-4" /> 上传 Cost Sheet 并自动计算
-                </div>
-                <p className="text-xs text-blue-700/70 mt-1">
-                  支持本模板的报价、人员成本、其它费用、外包和人天成本表；解析后自动填充预算、收入和项目基本信息。
-                </p>
-              </div>
-              <label className={`inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 cursor-pointer hover:bg-blue-50 ${parsing ? 'opacity-60 pointer-events-none' : ''}`}>
-                {parsing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                {parsing ? '解析中…' : costSheet ? '重新上传' : '选择 Excel'}
-                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => void handleCostSheetFile(e)} />
-              </label>
-            </div>
-            {costSheetError && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">{costSheetError}</div>}
-            {costSheet && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-medium text-blue-900 truncate">{costSheet.source_file_name}</span>
-                  <span className="text-blue-700/60">已解析，预算和收入已自动填充</span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {metrics.map((item) => (
-                    <div key={item.label} className="rounded-lg bg-white border border-blue-100 px-2.5 py-2">
-                      <p className="text-[10px] text-slate-500">{item.label}</p>
-                      <p className="text-sm font-semibold text-slate-900 truncate">{item.value}</p>
-                    </div>
-                  ))}
-                </div>
-                {costSheet.payment_milestones.length > 0 && (
-                  <div className="rounded-lg bg-white border border-blue-100 px-3 py-2">
-                    <p className="text-[11px] font-medium text-slate-600 mb-1">付款节点</p>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
-                      {costSheet.payment_milestones.map((item) => (
-                        <span key={item.stage}>{item.stage} {item.percentage}% · {formatCurrency(item.amount)}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <p className="text-[11px] text-blue-700/70">成本表会作为“成本表”类型附件保存到项目；审批利润 = 毛利 − 人力/外包风险金 − 其他风险。</p>
-                {costSheet.warnings.length > 0 && (
-                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800 space-y-0.5">
-                    {costSheet.warnings.map((warning) => <p key={warning}>• {warning}</p>)}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input label="项目名称" required value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：企业官网改版" />
           <Input label="客户" value={client} onChange={(e) => setClient(e.target.value)} placeholder="例如：艾克米公司" />
@@ -563,28 +475,157 @@ function ProjectFormModal({
           <Input label="结束日期" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </div>
 
-        <div className="rounded-lg border border-slate-200 p-4 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-            <DollarSign className="w-4 h-4 text-slate-400" /> 预算拆分
+        <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm font-semibold text-blue-900">
+              <Calculator className="w-4 h-4" /> Cost Sheet 明细计算
+            </div>
+            <label className="inline-flex items-center gap-2 text-xs text-blue-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useCostSheet}
+                onChange={(e) => handleUseCostSheetChange(e.target.checked)}
+                className="rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+              />
+              按 Cost Sheet 自动计算预算与合同收入
+            </label>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Input label="人力预算（元）" type="number" min="0" step="0.01" value={budgetLabor} onChange={(e) => setBudgetLabor(e.target.value)} />
-            <Input label="差旅预算（元）" type="number" min="0" step="0.01" value={budgetTravel} onChange={(e) => setBudgetTravel(e.target.value)} />
-            <Input label="其他预算（元）" type="number" min="0" step="0.01" value={budgetOther} onChange={(e) => setBudgetOther(e.target.value)} />
-          </div>
-          <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-100">
-            <span className="text-slate-500">预算总额</span>
-            <span className="font-bold text-slate-900">{formatCurrency(totalBudget)}</span>
-          </div>
+
+          {useCostSheet ? (
+            <>
+              <p className="text-xs text-blue-700/70">
+                金额单位：人民币元。输入合同/成本明细后，系统按 Cost Sheet 公式实时计算收入、成本、利润和审批利润；项目预算与合同收入自动同步。
+              </p>
+              <div className="max-h-[460px] overflow-y-auto rounded-lg border border-blue-100 bg-white">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-slate-50 z-10">
+                    <tr className="text-left text-slate-500 border-b border-slate-200">
+                      <th className="px-3 py-2 font-medium">明细类别</th>
+                      <th className="px-2 py-2 font-medium text-right">金额 / 比例</th>
+                      <th className="px-3 py-2 font-medium">计算说明</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td colSpan={3} className="px-3 py-1.5 bg-blue-50/70 text-[11px] font-semibold text-blue-900">合同与收入</td></tr>
+                    {moneyInput('hardwareContract', '硬件和软件合同金额（含税 13%）', '合同金额（含税）')}
+                    {moneyInput('serviceContract', '服务合同金额（含税 6%）', '合同金额（含税）')}
+                    {computedRow('合同总金额（TCV）', formatCurrency(computedCostSheet.total_contract_with_tax), '= 硬件/软件合同 + 服务合同')}
+                    {computedRow('硬件和软件收入（不含 13% 税）', formatCurrency(computedCostSheet.hardware_revenue_without_tax), '= 硬件/软件合同 ÷ 1.13')}
+                    {computedRow('服务收入（不含 6% 税）', formatCurrency(computedCostSheet.service_revenue_without_tax), '= 服务合同 ÷ 1.06')}
+                    {computedRow('合计收入', formatCurrency(computedCostSheet.total_revenue_without_tax), '= 硬件收入 + 服务收入')}
+                    <tr><td colSpan={3} className="px-3 py-1.5 bg-blue-50/70 text-[11px] font-semibold text-blue-900">成本</td></tr>
+                    {moneyInput('hardwareCost', '硬件和软件成本（不含税）', '硬件/软件成本')}
+                    {moneyInput('serviceCost', '服务成本（不含税）', '服务交付成本')}
+                    {moneyInput('outsourcingCost', '第三方服务 / 外包成本（不含税）', '外包或分包成本')}
+                    {moneyInput('manpowerCost', '人力费用', '内部人力成本')}
+                    {moneyInput('otherExpense', '其他费用（差旅等）', '差旅、招待及其他')}
+                    {moneyInput('travelCost', '其中：差旅费用', '用于项目预算的差旅拆分')}
+                    {moneyInput('withholdingTax', '预提税', '预提税及其他税费')}
+                    {computedRow('合计成本', formatCurrency(computedCostSheet.total_cost), '= 上述成本合计')}
+                    <tr><td colSpan={3} className="px-3 py-1.5 bg-blue-50/70 text-[11px] font-semibold text-blue-900">利润与风险</td></tr>
+                    {computedRow('项目利润', formatCurrency(computedCostSheet.gross_margin), '= 合计收入 − 合计成本')}
+                    {computedRow('项目利润率', `${(computedCostSheet.gross_margin_pct * 100).toFixed(2)}%`, '= 项目利润 ÷ 合计收入')}
+                    <tr className="border-b border-slate-100">
+                      <td className="py-1.5 pr-3 text-slate-700">第三方服务风险金</td>
+                      <td className="py-1.5 px-2">
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="number" min="0" max="100" step="0.1"
+                            value={costInputs.contingencyOutsourcingPct}
+                            onChange={(e) => setCostField('contingencyOutsourcingPct', e.target.value)}
+                            className="w-16 rounded-md border border-slate-300 px-2 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            aria-label="第三方服务风险金比例"
+                          />
+                          <span className="text-slate-500">%</span>
+                          <span className="ml-1 font-semibold text-slate-900">{formatCurrency(computedCostSheet.contingency_outsourcing)}</span>
+                        </div>
+                      </td>
+                      <td className="py-1.5 pl-3 text-[11px] text-slate-400">= 外包成本 × 比例</td>
+                    </tr>
+                    <tr className="border-b border-slate-100">
+                      <td className="py-1.5 pr-3 text-slate-700">人力风险金</td>
+                      <td className="py-1.5 px-2">
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="number" min="0" max="100" step="0.1"
+                            value={costInputs.contingencyManpowerPct}
+                            onChange={(e) => setCostField('contingencyManpowerPct', e.target.value)}
+                            className="w-16 rounded-md border border-slate-300 px-2 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            aria-label="人力风险金比例"
+                          />
+                          <span className="text-slate-500">%</span>
+                          <span className="ml-1 font-semibold text-slate-900">{formatCurrency(computedCostSheet.contingency_manpower)}</span>
+                        </div>
+                      </td>
+                      <td className="py-1.5 pl-3 text-[11px] text-slate-400">= 人力费用 × 比例</td>
+                    </tr>
+                    {moneyInput('otherRisk', '其他风险', '其他风险准备')}
+                    {computedRow('附加税（13%）', formatCurrency(computedCostSheet.surcharge_tax_hardware), '= (硬件收入 − 硬件成本) × 13% × 12%')}
+                    {computedRow('附加税（6%）', formatCurrency(computedCostSheet.surcharge_tax_service), '模板默认未启用（× 0）')}
+                    {moneyInput('financialInterest', '财务利息 / 保函费用', '资金成本或保函费用')}
+                    {computedRow('项目审批利润', formatCurrency(computedCostSheet.approval_margin), '= 项目利润 − 风险金 − 附加税 − 财务费用')}
+                    {computedRow('审批利润率', `${(computedCostSheet.approval_margin_pct * 100).toFixed(2)}%`, '= 审批利润 ÷ 合计收入')}
+                  </tbody>
+                </table>
+              </div>
+              <div className="rounded-lg bg-white border border-blue-100 px-3 py-2 text-xs text-slate-600">
+                预算拆分：人力 <span className="font-semibold text-slate-900">{formatCurrency(derived.budget_labor)}</span>
+                <span className="mx-2 text-slate-300">|</span>
+                差旅 <span className="font-semibold text-slate-900">{formatCurrency(derived.budget_travel)}</span>
+                <span className="mx-2 text-slate-300">|</span>
+                其他 <span className="font-semibold text-slate-900">{formatCurrency(derived.budget_other)}</span>
+                <span className="mx-2 text-slate-300">|</span>
+                合计 <span className="font-semibold text-slate-900">{formatCurrency(totalBudget)}</span>
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-blue-700/70">未启用 Cost Sheet 计算，将使用下方手工填写的预算和合同收入。</p>
+          )}
         </div>
 
-        <Input label="合同收入（元，含税）" type="number" min="0" step="0.01" value={revenue} onChange={(e) => setRevenue(e.target.value)} />
-        <p className="text-xs text-slate-400 -mt-2">Cost Sheet 的合同总额（含税）会自动填入此处；项目利润率使用成本表中的净收入计算。</p>
+        {useCostSheet ? (
+          <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <DollarSign className="w-4 h-4 text-slate-400" /> 预算拆分（自动）
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div><p className="text-xs text-slate-500">人力预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_labor)}</p></div>
+              <div><p className="text-xs text-slate-500">差旅预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_travel)}</p></div>
+              <div><p className="text-xs text-slate-500">其他预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_other)}</p></div>
+            </div>
+            <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-100">
+              <span className="text-slate-500">预算总额</span>
+              <span className="font-bold text-slate-900">{formatCurrency(totalBudget)}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-100">
+              <span className="text-slate-500">合同收入（含税，自动）</span>
+              <span className="font-bold text-slate-900">{formatCurrency(derived.revenue)}</span>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="rounded-lg border border-slate-200 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <DollarSign className="w-4 h-4 text-slate-400" /> 预算拆分
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Input label="人力预算（元）" type="number" min="0" step="0.01" value={budgetLabor} onChange={(e) => setBudgetLabor(e.target.value)} />
+                <Input label="差旅预算（元）" type="number" min="0" step="0.01" value={budgetTravel} onChange={(e) => setBudgetTravel(e.target.value)} />
+                <Input label="其他预算（元）" type="number" min="0" step="0.01" value={budgetOther} onChange={(e) => setBudgetOther(e.target.value)} />
+              </div>
+              <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-100">
+                <span className="text-slate-500">预算总额</span>
+                <span className="font-bold text-slate-900">{formatCurrency(totalBudget)}</span>
+              </div>
+            </div>
+            <Input label="合同收入（元，含税）" type="number" min="0" step="0.01" value={revenue} onChange={(e) => setRevenue(e.target.value)} />
+          </>
+        )}
 
         {error && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
         <div className="flex justify-end gap-3 pt-2">
           <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
-          <Button type="submit" disabled={saving || parsing}>{saving ? '保存中…' : project ? '保存修改' : '创建项目'}</Button>
+          <Button type="submit" disabled={saving}>{saving ? '保存中…' : project ? '保存修改' : '创建项目'}</Button>
         </div>
       </form>
     </Modal>
