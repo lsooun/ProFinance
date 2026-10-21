@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS projects (
   budget_travel REAL NOT NULL DEFAULT 0,
   budget_other REAL NOT NULL DEFAULT 0,
   revenue REAL NOT NULL DEFAULT 0,
+  cost_sheet TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -139,6 +140,7 @@ CREATE TABLE IF NOT EXISTS attachments (
   file_name TEXT NOT NULL,
   file_type TEXT NOT NULL DEFAULT '',
   file_size INTEGER NOT NULL DEFAULT 0,
+  category TEXT NOT NULL DEFAULT 'other',
   storage_path TEXT NOT NULL,
   uploaded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL
@@ -298,6 +300,15 @@ function migrateDatabase(db) {
     `);
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_projects_manager_user ON projects(manager_user_id)');
+
+  if (!columns.includes('cost_sheet')) {
+    db.exec('ALTER TABLE projects ADD COLUMN cost_sheet TEXT');
+  }
+
+  const attachmentColumns = db.prepare('PRAGMA table_info(attachments)').all().map((column) => column.name);
+  if (!attachmentColumns.includes('category')) {
+    db.exec("ALTER TABLE attachments ADD COLUMN category TEXT NOT NULL DEFAULT 'other'");
+  }
 
   const transactionColumns = db.prepare('PRAGMA table_info(transactions)').all().map((column) => column.name);
   if (!transactionColumns.includes('budget_category')) {

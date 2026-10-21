@@ -4,9 +4,10 @@ import {
   Card, Button, Input, Select, Modal, EmptyState, StatCard,
 } from '@/components/ui';
 import { formatDate, formatHours } from '@/lib/format';
+import { TIME_UNIT_HINT, TIME_UNIT_LABELS, toCanonicalHours, type TimeUnit } from '@/lib/timeUnits';
 import type { Person, Project, TimesheetEntry } from '@/types';
 import {
-  getPersons, getProjects, getTimesheets, createTimesheet, updateTimesheet, deleteTimesheet,
+  getPersons, getManageableProjects, getTimesheets, createTimesheet, updateTimesheet, deleteTimesheet,
   getAssignmentsByProject,
 } from '@/lib/storage';
 import {
@@ -22,7 +23,7 @@ export default function TimesheetPage() {
   const currentPersonId = user?.person_id ?? null;
   const [timesheets, setTimesheets] = useState<TimesheetEntry[]>(getTimesheets());
   const [persons] = useState<Person[]>(getPersons());
-  const [projects] = useState<Project[]>(getProjects());
+  const [projects] = useState<Project[]>(user ? getManageableProjects(user) : []);
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState<string>('');
   const [personFilter, setPersonFilter] = useState<string>('');
@@ -215,6 +216,7 @@ function TimesheetFormModal({
   const [projectId, setProjectId] = useState(entry?.project_id || '');
   const [date, setDate] = useState(entry?.date || new Date().toISOString().slice(0, 10));
   const [hours, setHours] = useState(entry?.hours?.toString() || '8');
+  const [unit, setUnit] = useState<TimeUnit>('hour');
   const [description, setDescription] = useState(entry?.description || '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -240,8 +242,9 @@ function TimesheetFormModal({
     }
     const hoursNum = parseFloat(hours);
     if (!hoursNum || hoursNum <= 0) { setError('工时必须大于 0。'); return; }
+    if (toCanonicalHours(hoursNum, unit) > 2088) { setError('单条工时折算后不能超过 2088 小时。'); return; }
     setSaving(true);
-    const payload = { person_id: personId, project_id: projectId, date, hours: hoursNum, description };
+    const payload = { person_id: personId, project_id: projectId, date, hours: hoursNum, hours_unit: unit, description };
     const saved = entry ? await updateTimesheet(entry.id, payload) : await createTimesheet(payload);
     setSaving(false);
     if (saved) onSaved();
@@ -273,10 +276,19 @@ function TimesheetFormModal({
           </Select>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Input label="日期" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-          <Input label="工时（小时）" type="number" min="0.25" max="24" step="0.25" required value={hours} onChange={(e) => setHours(e.target.value)} placeholder="8" />
+          <Input label="工时数值" type="number" min="0.01" step="0.25" required value={hours} onChange={(e) => setHours(e.target.value)} placeholder="8" />
+          <Select label="单位" value={unit} onChange={(e) => setUnit(e.target.value as TimeUnit)}>
+            {(Object.keys(TIME_UNIT_LABELS) as TimeUnit[]).map((item) => (
+              <option key={item} value={item}>{TIME_UNIT_LABELS[item]}</option>
+            ))}
+          </Select>
         </div>
+        <p className="text-xs text-slate-500">
+          折算后：<span className="font-semibold text-slate-700">{formatHours(toCanonicalHours(parseFloat(hours) || 0, unit))}</span>
+          <br />{TIME_UNIT_HINT}
+        </p>
         <Input label="工作内容" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="填写具体工作内容…" />
         {error && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{error}</div>}
         <div className="flex justify-end gap-3 pt-2">
@@ -294,6 +306,7 @@ interface TsImportRow {
   personName: string;
   projectName: string;
   hours: number;
+  unit: TimeUnit;
   description: string;
   error: string | null;
 }
@@ -312,7 +325,7 @@ function TimesheetImportModal({
   const [hasParsed, setHasParsed] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
 
-  const TEMPLATE_HEADERS = ['日期', '人员', '项目', '工时', '描述'];
+  const TEMPLATE_HEADERS = ['日期', '人员', '项目', '工时', '单位', '描述'];
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -338,6 +351,7 @@ function TimesheetImportModal({
       const personName = getFieldAny(row.values, result.headers, ['人员', 'Person']);
       const projectName = getFieldAny(row.values, result.headers, ['项目', 'Project']);
       const hoursStr = getFieldAny(row.values, result.headers, ['工时', 'Hours']);
+      const unitStr = getFieldAny(row.values, result.headers, ['单位', 'Unit']).trim().toLowerCase();
       const description = getFieldAny(row.values, result.headers, ['描述', '工作内容', 'Description']);
       const errors: string[] = [];
 
@@ -346,6 +360,15 @@ function TimesheetImportModal({
       if (!projectName) errors.push('项目不能为空');
       const hours = parseFloat(hoursStr);
       if (!Number.isFinite(hours) || hours <= 0) errors.push('工时必须大于 0');
+      const unitAliases: Record<string, TimeUnit> = {
+        '': 'hour', '小时': 'hour', '时': 'hour', hour: 'hour', hours: 'hour',
+        '天': 'day', day: 'day', days: 'day',
+        '周': 'week', week: 'week', weeks: 'week',
+        '月': 'month', month: 'month', months: 'month',
+        '年': 'year', year: 'year', years: 'year',
+      };
+      const unit = unitAliases[unitStr];
+      if (!unit) errors.push('单位必须为小时/天/周/月/年');
       if (personName && !persons.some((person) => person.name.toLowerCase() === personName.toLowerCase())) {
         errors.push(`人员“${personName}”不存在`);
       }
@@ -359,6 +382,7 @@ function TimesheetImportModal({
         personName,
         projectName,
         hours,
+        unit: unit || 'hour',
         description,
         error: errors.length > 0 ? errors.join('；') : null,
       };
@@ -384,6 +408,7 @@ function TimesheetImportModal({
         project_id: project.id,
         date: row.date,
         hours: row.hours,
+        hours_unit: row.unit,
         description: row.description,
       });
       if (created) imported++;
@@ -402,8 +427,8 @@ function TimesheetImportModal({
     const sampleDate = new Date().toISOString().slice(0, 10);
     const sampleRows = samplePerson && sampleProject
       ? [
-          [sampleDate, samplePerson, sampleProject, '8', '示例工作内容'],
-          [sampleDate, samplePerson, sampleProject, '4', '示例工作内容'],
+          [sampleDate, samplePerson, sampleProject, '8', '小时', '示例工作内容'],
+          [sampleDate, samplePerson, sampleProject, '1', '天', '示例工作内容'],
         ]
       : [];
     downloadCSVTemplate(TEMPLATE_HEADERS, 'timesheet-template.csv', sampleRows);
@@ -475,6 +500,7 @@ function TimesheetImportModal({
                       <th className="px-3 py-2 font-medium">人员</th>
                       <th className="px-3 py-2 font-medium">项目</th>
                       <th className="px-3 py-2 font-medium text-right">工时</th>
+                      <th className="px-3 py-2 font-medium">单位</th>
                       <th className="px-3 py-2 font-medium">描述</th>
                       <th className="px-3 py-2 font-medium">状态</th>
                     </tr>
@@ -487,6 +513,7 @@ function TimesheetImportModal({
                         <td className="px-3 py-2 text-slate-600">{row.personName}</td>
                         <td className="px-3 py-2 text-slate-600 max-w-[100px] truncate">{row.projectName}</td>
                         <td className="px-3 py-2 text-right text-slate-900 font-medium">{row.hours || '—'}</td>
+                        <td className="px-3 py-2 text-slate-600">{TIME_UNIT_LABELS[row.unit]}</td>
                         <td className="px-3 py-2 text-slate-600 max-w-[100px] truncate">{row.description || '—'}</td>
                         <td className="px-3 py-2">
                           {row.error ? <span className="text-rose-600 text-xs">{row.error}</span> : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}

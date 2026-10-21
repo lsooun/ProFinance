@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '@/context/auth-context';
 import { Card, Button, Badge, Select } from '@/components/ui';
 import { formatCurrency, formatCurrencyDetailed, formatHours, formatDate } from '@/lib/format';
 import type { Transaction, Project, Person, TimesheetEntry, InvoicePlan, InvoiceStatus } from '@/types';
@@ -7,7 +8,7 @@ import {
 } from '@/types';
 import { effectiveInvoiceStatus, invoiceAmount } from '@/lib/finance';
 import {
-  getTransactions, getProjects, getPersons, getTimesheets,
+  getTransactions, getManageableProjects, getPersons, getTimesheets,
   getProjectPlannedHours, getAllInvoicePlans,
 } from '@/lib/storage';
 import {
@@ -39,8 +40,10 @@ function downloadCSV(filename: string, headers: string[], rows: unknown[][]): vo
 }
 
 export default function ReportsPage() {
+  const { profile } = useAuth();
+  const isManager = profile?.role === 'manager';
   const [transactions] = useState<Transaction[]>(getTransactions());
-  const [projects] = useState<Project[]>(getProjects());
+  const [projects] = useState<Project[]>(profile ? getManageableProjects(profile) : []);
   const [persons] = useState<Person[]>(getPersons());
   const [timesheets] = useState<TimesheetEntry[]>(getTimesheets());
   const [invoicePlans] = useState<InvoicePlan[]>(getAllInvoicePlans());
@@ -223,6 +226,12 @@ export default function ReportsPage() {
           <span className="flex items-center gap-1.5"><FileText className="w-4 h-4" /> 回款计划</span>
         </button>
       </div>
+
+      {isManager && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          你正在查看自己负责项目的明细报表；全部项目的汇总统计请查看仪表盘和项目列表。
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">

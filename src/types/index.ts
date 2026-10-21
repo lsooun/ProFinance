@@ -20,6 +20,43 @@ export interface ManagerOption {
   role: UserRole;
 }
 
+export interface CostSheetMilestone {
+  stage: string;
+  percentage: number;
+  amount: number;
+  description: string;
+}
+
+export interface CostSheetData {
+  source_file_name: string;
+  parsed_at: string;
+  customer_name: string;
+  project_description: string;
+  project_start_date: string | null;
+  person_days: number;
+  service_contract_with_tax: number;
+  service_revenue_without_tax: number;
+  hardware_contract_with_tax: number;
+  total_contract_with_tax: number;
+  total_revenue_without_tax: number;
+  manpower_cost: number;
+  travel_cost: number;
+  other_expense: number;
+  outsourcing_cost: number;
+  service_cost: number;
+  withholding_tax: number;
+  total_cost: number;
+  gross_margin: number;
+  gross_margin_pct: number;
+  contingency_manpower: number;
+  contingency_outsourcing: number;
+  other_risk: number;
+  approval_margin: number;
+  approval_margin_pct: number;
+  payment_milestones: CostSheetMilestone[];
+  warnings: string[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -34,6 +71,13 @@ export interface Project {
   budget_travel: number;
   budget_other: number;
   revenue: number;
+  cost_sheet?: CostSheetData | null;
+  aggregate_income?: number;
+  aggregate_expense?: number;
+  aggregate_hours?: number;
+  aggregate_planned_hours?: number;
+  aggregate_month_income?: number;
+  aggregate_month_expense?: number;
   created_at: string;
   updated_at: string;
 }
@@ -117,12 +161,45 @@ export const INVOICE_STATUS_COLORS: Record<InvoiceStatus, string> = {
   collected: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
+export type AttachmentCategory =
+  | 'cost_sheet'
+  | 'contract'
+  | 'sow'
+  | 'blueprint'
+  | 'test_confirmation'
+  | 'go_live'
+  | 'closure'
+  | 'other';
+
+export const ATTACHMENT_CATEGORY_LABELS: Record<AttachmentCategory, string> = {
+  cost_sheet: '成本表',
+  contract: '合同',
+  sow: 'SOW',
+  blueprint: '蓝图签字文档',
+  test_confirmation: '测试确认文档',
+  go_live: '上线确认文档',
+  closure: '项目关闭文档',
+  other: '其他文档',
+};
+
+export const ATTACHMENT_CATEGORY_COLORS: Record<AttachmentCategory, string> = {
+  cost_sheet: 'bg-blue-50 text-blue-700 border-blue-200',
+  contract: 'bg-violet-50 text-violet-700 border-violet-200',
+  sow: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  blueprint: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+  test_confirmation: 'bg-amber-50 text-amber-700 border-amber-200',
+  go_live: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  closure: 'bg-slate-100 text-slate-600 border-slate-200',
+  other: 'bg-slate-50 text-slate-500 border-slate-200',
+};
+
 export interface ProjectAttachment {
   id: string;
   project_id: string;
   file_name: string;
   file_type: string;
   file_size: number;
+  category: AttachmentCategory;
   uploaded_by: string | null;
   created_at: string;
 }
@@ -206,5 +283,6 @@ export interface BootstrapData {
   permissions: {
     canManage: boolean;
     isAdmin: boolean;
+    canViewAllProjectStats?: boolean;
   };
 }

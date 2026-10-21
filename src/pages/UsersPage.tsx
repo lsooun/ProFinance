@@ -300,7 +300,7 @@ function UserFormModal({
         email,
         role,
         is_active: user.id === currentUserId ? true : isActive,
-        person_id: role === 'employee' ? personId || null : null,
+        person_id: personId || null,
       };
       if (password) updates.password = password;
       const updated = await updateUser(user.id, updates);
@@ -310,7 +310,7 @@ function UserFormModal({
       if (!email || !password) { setError('新增用户必须填写邮箱和密码'); return; }
       if (password.length < 6) { setError('密码至少需要 6 个字符'); return; }
       setSaving(true);
-      const created = await createUser(fullName, email, password, role, role === 'employee' ? personId || null : null);
+      const created = await createUser(fullName, email, password, role, personId || null);
       setSaving(false);
       if (created) await onSaved();
     }
@@ -358,16 +358,15 @@ function UserFormModal({
           </Select>
         </div>
 
-        {role === 'employee' && (
-          <Select label="关联人员档案（可选）" value={personId} onChange={(e) => setPersonId(e.target.value)}>
-            <option value="">不关联人员</option>
-            {getPersons().filter((person) => person.is_active).map((person) => <option key={person.id} value={person.id}>{person.name} — {person.department || '未填写部门'}</option>)}
-          </Select>
-        )}
+        <Select label="关联人员档案（可选）" value={personId} onChange={(e) => setPersonId(e.target.value)}>
+          <option value="">不关联人员</option>
+          {getPersons().filter((person) => person.is_active).map((person) => <option key={person.id} value={person.id}>{person.name} — {person.department || '未填写部门'}</option>)}
+        </Select>
+        <p className="-mt-2 text-xs text-slate-400">所有角色都可以关联人员档案；关联后可用于工时、项目成员和绩效统计。</p>
 
         <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 text-xs text-slate-500 leading-relaxed">
           <strong className="text-slate-700">管理员</strong>：全部权限，包含用户管理。<br />
-          <strong className="text-slate-700">项目经理</strong>：管理项目、收支、人员、工时与报表。<br />
+          <strong className="text-slate-700">项目经理</strong>：查看全部项目汇总统计；管理自己负责项目的明细、收支、人员、工时与报表。<br />
           <strong className="text-slate-700">普通员工</strong>：只能查看被分配的项目，并填报自己的工时。
         </div>
 

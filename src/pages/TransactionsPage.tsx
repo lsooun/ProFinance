@@ -9,7 +9,7 @@ import {
   type BudgetCategory, type Transaction, type TransactionType, type Project,
 } from '@/types';
 import {
-  getTransactions, getProjects, createTransaction, updateTransaction, deleteTransaction,
+  getTransactions, getManageableProjects, createTransaction, updateTransaction, deleteTransaction,
   getInvoicePlansByProject,
 } from '@/lib/storage';
 import { suggestedBudgetCategory } from '@/lib/finance';
@@ -23,7 +23,7 @@ import { notify } from '@/lib/notify';
 export default function TransactionsPage({ initialProjectId }: { initialProjectId?: string | null }) {
   const { user } = useAuth();
   const [transactions, setTransactions] = useState<Transaction[]>(getTransactions());
-  const [projects, setProjects] = useState<Project[]>(getProjects());
+  const [projects, setProjects] = useState<Project[]>(user ? getManageableProjects(user) : []);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TransactionType | ''>('');
   const [projectFilter, setProjectFilter] = useState<string>('');
@@ -37,7 +37,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
 
   function reload() {
     setTransactions(getTransactions());
-    setProjects(getProjects());
+    setProjects(user ? getManageableProjects(user) : []);
   }
 
   const filtered = transactions.filter((tx) => {

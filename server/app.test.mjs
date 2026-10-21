@@ -84,7 +84,7 @@ test('登录失败返回 401，登录成功返回会话', async () => {
   assert.equal(bootstrap.data.transactions.length, 8);
   assert.equal(bootstrap.data.invoicePlans.length, 5);
   assert.equal(bootstrap.data.users.length, 3);
-  assert.deepEqual(bootstrap.data.permissions, { canManage: true, isAdmin: true });
+  assert.deepEqual(bootstrap.data.permissions, { canManage: true, isAdmin: true, canViewAllProjectStats: true });
   assert.equal('password_hash' in bootstrap.data.user, false);
   assert.equal(bootstrap.data.managerOptions.length, 1);
   assert.equal(bootstrap.data.managerOptions[0].full_name, '张伟');
@@ -441,6 +441,184 @@ test('收支支持预算分类和回款节点关联校验', async () => {
   await api(`/api/transactions/${income.data.id}`, { method: 'DELETE', cookie: managerCookie });
 });
 
+test('项目经理只能查看自己负责项目的明细，但能看到全部项目统计', async () => {
+  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const managerId = bootstrap.data.user.id;
+  assert.equal(bootstrap.data.projects.length, 3);
+  const ownedIds = new Set(
+    bootstrap.data.projects.filter((project) => project.manager_user_id === managerId).map((project) => project.id),
+  );
+  const unowned = bootstrap.data.projects.find((project) => project.manager_user_id !== managerId);
+  assert.ok(unowned);
+  assert.ok(bootstrap.data.projects.every((project) => typeof project.aggregate_income === 'number'));
+  assert.ok(bootstrap.data.transactions.length > 0);
+  assert.ok(bootstrap.data.transactions.every((tx) => tx.project_id && ownedIds.has(tx.project_id)));
+  assert.ok(bootstrap.data.timesheets.every((entry) => ownedIds.has(entry.project_id)));
+  assert.ok(bootstrap.data.invoicePlans.every((plan) => ownedIds.has(plan.project_id)));
+  assert.ok(bootstrap.data.attachments.every((attachment) => ownedIds.has(attachment.project_id)));
+
+  const patch = await api(`/api/projects/${unowned.id}`, {
+    method: 'PATCH',
+    cookie: managerCookie,
+    body: { description: '不应被修改' },
+  });
+  assert.equal(patch.status, 403);
+
+  const forbiddenTx = await api('/api/transactions', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      type: 'expense', category: '其他', description: '越权测试',
+      amount: 1, transaction_date: '2026-10-20', project_id: unowned.id,
+    },
+  });
+  assert.equal(forbiddenTx.status, 403);
+
+  const ownedProject = bootstrap.data.projects.find((project) => ownedIds.has(project.id));
+  const allowedTx = await api('/api/transactions', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      type: 'expense', category: '其他', description: '权限内测试',
+      amount: 1, transaction_date: '2026-10-20', project_id: ownedProject.id,
+    },
+  });
+  assert.equal(allowedTx.status, 201);
+  await api(`/api/transactions/${allowedTx.data.id}`, { method: 'DELETE', cookie: managerCookie });
+});
+
+test('工时支持天/周/月/年单位并统一折算为小时存储', async () => {
+  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const project = bootstrap.data.projects.find((item) => item.manager_user_id === bootstrap.data.user.id);
+  const assignment = bootstrap.data.assignments.find((item) => item.project_id === project.id);
+  assert.ok(project && assignment);
+
+  const created = await api('/api/timesheets', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      project_id: project.id,
+      person_id: assignment.person_id,
+      date: '2026-10-20',
+      hours: 2,
+      hours_unit: 'day',
+      description: '单位折算测试',
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.hours, 16);
+
+  const updated = await api(`/api/timesheets/${created.data.id}`, {
+    method: 'PATCH',
+    cookie: managerCookie,
+    body: { hours: 1, hours_unit: 'week' },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.hours, 40);
+
+  const invalid = await api('/api/timesheets', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      project_id: project.id,
+      person_id: assignment.person_id,
+      date: '2026-10-20',
+      hours: 1,
+      hours_unit: 'century',
+    },
+  });
+  assert.equal(invalid.status, 400);
+
+  await api(`/api/timesheets/${created.data.id}`, { method: 'DELETE', cookie: managerCookie });
+});
+
+test('所有角色的用户都可以关联人员档案', async () => {
+  const bootstrap = await api('/api/bootstrap', { cookie: adminCookie });
+  const person = bootstrap.data.persons.find((item) => item.is_active);
+  const stamp = Date.now();
+  const created = await api('/api/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: {
+      full_name: '人员关联经理', email: `person.link.${stamp}@company.com`,
+      password: '123456', role: 'manager', person_id: person.id,
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.user.person_id, person.id);
+
+  const updated = await api(`/api/users/${created.data.user.id}`, {
+    method: 'PATCH',
+    cookie: adminCookie,
+    body: { role: 'admin', person_id: person.id },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.data.user.person_id, person.id);
+
+  await api(`/api/users/${created.data.user.id}`, { method: 'DELETE', cookie: adminCookie });
+});
+
+test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async () => {
+  const costSheet = {
+    source_file_name: 'test.xlsx',
+    parsed_at: new Date().toISOString(),
+    customer_name: '测试客户',
+    project_description: 'Cost Sheet 测试项目',
+    project_start_date: '2026-10-01',
+    person_days: 10,
+    service_contract_with_tax: 106,
+    service_revenue_without_tax: 100,
+    hardware_contract_with_tax: 0,
+    total_contract_with_tax: 106,
+    total_revenue_without_tax: 100,
+    manpower_cost: 60,
+    travel_cost: 5,
+    other_expense: 5,
+    outsourcing_cost: 0,
+    service_cost: 0,
+    withholding_tax: 0,
+    total_cost: 70,
+    gross_margin: 30,
+    gross_margin_pct: 0.3,
+    contingency_manpower: 3,
+    contingency_outsourcing: 0,
+    other_risk: 0,
+    approval_margin: 27,
+    approval_margin_pct: 0.27,
+    payment_milestones: [{ stage: '合同签订', percentage: 100, amount: 106, description: '' }],
+    warnings: [],
+  };
+  const created = await api('/api/projects', {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      name: 'Cost Sheet 集成测试', description: '', status: 'presales',
+      client: '测试客户', budget_labor: 60, budget_travel: 5, budget_other: 5,
+      revenue: 106, cost_sheet: costSheet,
+    },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.cost_sheet.total_contract_with_tax, 106);
+  assert.equal(created.data.cost_sheet.approval_margin, 27);
+
+  const attachment = await api(`/api/projects/${created.data.id}/attachments`, {
+    method: 'POST',
+    cookie: managerCookie,
+    body: {
+      file_name: 'SOW.docx',
+      file_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      file_size: 10,
+      category: 'sow',
+      data_base64: Buffer.from('fake-docx').toString('base64'),
+    },
+  });
+  assert.equal(attachment.status, 201);
+  assert.equal(attachment.data.category, 'sow');
+
+  const deleted = await api(`/api/projects/${created.data.id}`, { method: 'DELETE', cookie: managerCookie });
+  assert.equal(deleted.status, 200);
+});
+
 test('最后一名管理员不能被降级、停用或删除', async () => {
   const me = (await api('/api/bootstrap', { cookie: adminCookie })).data.user;
 
@@ -553,14 +731,16 @@ test('附件上传、下载、删除走服务端存储', async () => {
     method: 'POST',
     cookie: managerCookie,
     body: {
-      file_name: '成本表.xlsx',
-      file_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      file_name: '合同.pdf',
+      file_type: 'application/pdf',
       file_size: 16,
+      category: 'contract',
       data_base64: base64,
     },
   });
   assert.equal(uploaded.status, 201);
-  assert.equal(uploaded.data.file_name, '成本表.xlsx');
+  assert.equal(uploaded.data.file_name, '合同.pdf');
+  assert.equal(uploaded.data.category, 'contract');
   assert.equal('storage_path' in uploaded.data, false);
   assert.equal('file_data' in uploaded.data, false);
 

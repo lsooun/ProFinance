@@ -3,12 +3,13 @@ import { Card, Button, Badge, EmptyState, StatCard, Modal, Input } from '@/compo
 import {
   formatCurrency, formatCurrencyDetailed, formatDate, formatHours,
 } from '@/lib/format';
-import { budgetActuals, effectiveInvoiceStatus, invoiceAmount, projectFinancials } from '@/lib/finance';
+import { budgetActuals, effectiveInvoiceStatus, invoiceAmount, projectFinancials, projectFinancialsFromAggregates } from '@/lib/finance';
 import {
   STATUS_LABELS, STATUS_COLORS,
   PERSON_ROLE_LABELS,
   INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS,
-  type Project, type Transaction, type Person, type ProjectAssignment,
+  ATTACHMENT_CATEGORY_LABELS, ATTACHMENT_CATEGORY_COLORS,
+  type AttachmentCategory, type Project, type Transaction, type Person, type ProjectAssignment,
   type TimesheetEntry, type InvoicePlan, type ProjectAttachment, type InvoiceStatus,
 } from '@/types';
 import {
@@ -23,7 +24,7 @@ import { useAuth } from '@/context/auth-context';
 import {
   ArrowLeft, Calendar, User, Target, TrendingUp, TrendingDown,
   Wallet, Plus, ArrowUpRight, ArrowDownRight, Clock, Users, Trash2, Pencil,
-  FileText, Paperclip, Download, Upload, FileSpreadsheet, DollarSign,
+  FileText, Paperclip, Download, Upload, FileSpreadsheet, DollarSign, ShieldAlert, FileType2,
 } from 'lucide-react';
 
 export default function ProjectDetailPage({
@@ -36,7 +37,6 @@ export default function ProjectDetailPage({
   onAddTransaction?: (projectId: string) => void;
 }) {
   const { user } = useAuth();
-  const canManage = user?.role === 'admin' || user?.role === 'manager';
 
   const [project, setProject] = useState<Project | null>(getProjectById(projectId));
   const [assignments, setAssignments] = useState<ProjectAssignment[]>(getAssignmentsByProject(projectId));
@@ -51,6 +51,11 @@ export default function ProjectDetailPage({
   const [editingAssignment, setEditingAssignment] = useState<ProjectAssignment | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadCategory, setUploadCategory] = useState<AttachmentCategory>('contract');
+  const [attachmentFilter, setAttachmentFilter] = useState<AttachmentCategory | 'all'>('all');
+  const visibleAttachments = attachmentFilter === 'all'
+    ? attachments
+    : attachments.filter((attachment) => attachment.category === attachmentFilter);
 
   function reload() {
     setProject(getProjectById(projectId));
@@ -69,6 +74,61 @@ export default function ProjectDetailPage({
         </Button>
         <Card className="p-6">
           <EmptyState icon={<Target className="w-6 h-6" />} title="项目不存在或无权访问" description="该项目可能已被删除，或者你没有被分配到该项目。" />
+        </Card>
+      </div>
+    );
+  }
+
+  const canViewDetails = user?.role === 'admin'
+    || user?.role === 'employee'
+    || (user?.role === 'manager' && project.manager_user_id === user.id);
+  const canManage = user?.role === 'admin'
+    || (user?.role === 'manager' && project.manager_user_id === user.id);
+
+  if (!canViewDetails) {
+    const summary = projectFinancialsFromAggregates(project);
+    return (
+      <div className="space-y-6 max-w-7xl mx-auto">
+        <Button variant="ghost" onClick={onBack}>
+          <ArrowLeft className="w-4 h-4" /> 返回项目列表
+        </Button>
+        <Card className="p-6">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3 mb-2">
+                <h2 className="text-xl font-bold text-slate-900">{project.name}</h2>
+                <Badge className={STATUS_COLORS[project.status]}>{STATUS_LABELS[project.status]}</Badge>
+              </div>
+              {project.description && <p className="text-sm text-slate-500 max-w-2xl">{project.description}</p>}
+              <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-500">
+                {project.client && <span className="flex items-center gap-1.5"><Target className="w-4 h-4" /> {project.client}</span>}
+                {project.manager_name && <span className="flex items-center gap-1.5"><User className="w-4 h-4" /> {project.manager_name}</span>}
+                <span className="flex items-center gap-1.5"><Calendar className="w-4 h-4" /> {formatDate(project.start_date)} → {formatDate(project.end_date)}</span>
+              </div>
+            </div>
+          </div>
+        </Card>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
+          <ShieldAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium">当前为项目统计视图</p>
+            <p className="text-xs mt-0.5">项目经理可以查看所有项目的汇总统计；只有项目负责人可以查看收支、工时、回款、附件等明细。</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard label="合同收入" value={formatCurrency(project.revenue)} icon={<Target className="w-5 h-5" />} color="amber" />
+          <StatCard label="实际收入" value={formatCurrency(summary.actualIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
+          <StatCard label="实际支出" value={formatCurrency(summary.actualExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />
+          <StatCard label="实际利润" value={formatCurrency(summary.actualProfit)} icon={<Wallet className="w-5 h-5" />} color={summary.actualProfit >= 0 ? 'blue' : 'rose'} />
+        </div>
+        <Card className="p-5">
+          <h3 className="text-sm font-semibold text-slate-900 mb-3">项目统计</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+            <div><p className="text-xs text-slate-500">预算总额</p><p className="font-semibold text-slate-900 mt-1">{formatCurrency(summary.budget)}</p></div>
+            <div><p className="text-xs text-slate-500">计划利润</p><p className={`font-semibold mt-1 ${summary.plannedProfit >= 0 ? 'text-blue-700' : 'text-rose-700'}`}>{formatCurrency(summary.plannedProfit)}（{summary.plannedMargin.toFixed(1)}%）</p></div>
+            <div><p className="text-xs text-slate-500">实际工时</p><p className="font-semibold text-slate-900 mt-1">{formatHours(project.aggregate_hours ?? 0)}</p></div>
+            <div><p className="text-xs text-slate-500">计划工时</p><p className="font-semibold text-slate-900 mt-1">{formatHours(project.aggregate_planned_hours ?? 0)}</p></div>
+          </div>
         </Card>
       </div>
     );
@@ -157,15 +217,15 @@ export default function ProjectDetailPage({
     if (!file) return;
     setUploadError(null);
 
-    const allowedExtensions = ['.xlsx', '.xls'];
+    const allowedExtensions = ['.xlsx', '.xls', '.doc', '.docx', '.pdf'];
     const fileName = file.name.toLowerCase();
     if (!allowedExtensions.some((ext) => fileName.endsWith(ext))) {
-      setUploadError('仅支持上传 Excel 文件（.xlsx / .xls）。');
+      setUploadError('仅支持上传 Excel、Word、PDF 文件（.xlsx / .xls / .doc / .docx / .pdf）。');
       e.target.value = '';
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setUploadError('文件大小不能超过 5 MB。');
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError('文件大小不能超过 10 MB。');
       e.target.value = '';
       return;
     }
@@ -178,8 +238,9 @@ export default function ProjectDetailPage({
       const created = await createAttachment({
         project_id: projectId,
         file_name: file.name,
-        file_type: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        file_type: file.type || 'application/octet-stream',
         file_size: file.size,
+        category: uploadCategory,
         data_base64: dataBase64,
       });
       setUploading(false);
@@ -244,6 +305,56 @@ export default function ProjectDetailPage({
             </div>
             <p className="mt-3 text-xs text-slate-400">实际支出按收支记录中的“预算分类”归集。</p>
           </Card>
+
+
+          {project.cost_sheet && (
+            <Card className="p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <FileSpreadsheet className="w-5 h-5 text-blue-500" />
+                <h3 className="text-base font-semibold text-slate-900">Cost Sheet 分析</h3>
+                <span className="text-xs text-slate-400 truncate">{project.cost_sheet.source_file_name}</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {[
+                  { label: '合同总额（含税）', value: formatCurrency(project.cost_sheet.total_contract_with_tax) },
+                  { label: '净收入（不含税）', value: formatCurrency(project.cost_sheet.total_revenue_without_tax) },
+                  { label: '总成本', value: formatCurrency(project.cost_sheet.total_cost) },
+                  { label: '毛利', value: `${formatCurrency(project.cost_sheet.gross_margin)}（${(project.cost_sheet.gross_margin_pct * 100).toFixed(1)}%）` },
+                  { label: '审批利润', value: `${formatCurrency(project.cost_sheet.approval_margin)}（${(project.cost_sheet.approval_margin_pct * 100).toFixed(1)}%）` },
+                  { label: '人天', value: `${project.cost_sheet.person_days}` },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-lg bg-slate-50 px-3 py-2.5">
+                    <p className="text-[11px] text-slate-500">{item.label}</p>
+                    <p className="text-sm font-semibold text-slate-900 mt-0.5">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 text-sm">
+                <div><p className="text-xs text-slate-500">人力成本</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.manpower_cost)}</p></div>
+                <div><p className="text-xs text-slate-500">差旅成本</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.travel_cost)}</p></div>
+                <div><p className="text-xs text-slate-500">其他费用</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.other_expense)}</p></div>
+                <div><p className="text-xs text-slate-500">外包成本</p><p className="font-medium text-slate-900 mt-0.5">{formatCurrency(project.cost_sheet.outsourcing_cost)}</p></div>
+              </div>
+              {project.cost_sheet.payment_milestones.length > 0 && (
+                <div className="mt-4 rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs font-medium text-slate-600 mb-2">付款节点</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+                    {project.cost_sheet.payment_milestones.map((item) => (
+                      <div key={item.stage} className="rounded bg-slate-50 px-2.5 py-2">
+                        <p className="text-xs font-medium text-slate-800">{item.stage}</p>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{item.percentage}% · {formatCurrency(item.amount)}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {project.cost_sheet.warnings.length > 0 && (
+                <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                  {project.cost_sheet.warnings.map((warning) => <p key={warning}>• {warning}</p>)}
+                </div>
+              )}
+            </Card>
+          )}
 
           <Card className="p-5">
             <div className="flex items-center justify-between mb-4">
@@ -550,42 +661,81 @@ export default function ProjectDetailPage({
       {canManage && (
         <>
           <Card className="p-5">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
               <div className="flex items-center gap-2">
                 <Paperclip className="w-5 h-5 text-slate-400" />
-                <h3 className="text-base font-semibold text-slate-900">附件</h3>
+                <h3 className="text-base font-semibold text-slate-900">项目文档</h3>
                 {attachments.length > 0 && <Badge className="bg-slate-100 text-slate-600 border-slate-200">{attachments.length}</Badge>}
               </div>
-              <label className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-colors cursor-pointer ${uploading ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
-                <Upload className="w-4 h-4" /> {uploading ? '上传中…' : '上传成本表'}
-                <input type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" disabled={uploading} />
-              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={uploadCategory}
+                  onChange={(e) => setUploadCategory(e.target.value as AttachmentCategory)}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                >
+                  {(Object.keys(ATTACHMENT_CATEGORY_LABELS) as AttachmentCategory[]).map((category) => (
+                    <option key={category} value={category}>{ATTACHMENT_CATEGORY_LABELS[category]}</option>
+                  ))}
+                </select>
+                <label className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-colors cursor-pointer ${uploading ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                  <Upload className="w-4 h-4" /> {uploading ? '上传中…' : '上传文档'}
+                  <input type="file" accept=".xlsx,.xls,.doc,.docx,.pdf" onChange={handleFileUpload} className="hidden" disabled={uploading} />
+                </label>
+              </div>
             </div>
 
             {uploadError && (
               <div className="mb-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{uploadError}</div>
             )}
 
+            {attachments.length > 0 && (
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xs text-slate-500">按类型筛选</span>
+                <select
+                  value={attachmentFilter}
+                  onChange={(e) => setAttachmentFilter(e.target.value as AttachmentCategory | 'all')}
+                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                >
+                  <option value="all">全部文档</option>
+                  {(Object.keys(ATTACHMENT_CATEGORY_LABELS) as AttachmentCategory[]).map((category) => (
+                    <option key={category} value={category}>{ATTACHMENT_CATEGORY_LABELS[category]}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {attachments.length === 0 ? (
               <EmptyState
                 icon={<FileSpreadsheet className="w-6 h-6" />}
-                title="暂无附件"
-                description="支持上传 Excel 成本表（.xlsx / .xls），单个文件不超过 5 MB。"
+                title="暂无项目文档"
+                description="支持上传 Excel、Word、PDF，按成本表、合同、SOW、蓝图签字、测试确认、上线确认、项目关闭等类型归档，单个文件不超过 10 MB。"
+              />
+            ) : visibleAttachments.length === 0 ? (
+              <EmptyState
+                icon={<FileSpreadsheet className="w-6 h-6" />}
+                title="该类型暂无文档"
+                description="切换筛选条件，或上传该类型的项目文档。"
               />
             ) : (
               <div className="space-y-2">
-                {attachments.map((attachment) => {
+                {visibleAttachments.map((attachment) => {
                   const sizeKB = attachment.file_size / 1024;
                   const sizeStr = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB.toFixed(0)} KB`;
+                  const isExcel = /\.(xlsx|xls)$/i.test(attachment.file_name);
                   return (
                     <div key={attachment.id} className="flex items-center justify-between py-2.5 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
-                          <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${isExcel ? 'bg-emerald-50' : 'bg-blue-50'}`}>
+                          {isExcel ? <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> : <FileType2 className="w-4 h-4 text-blue-600" />}
                         </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-900 truncate">{attachment.file_name}</p>
-                          <p className="text-xs text-slate-500">{sizeStr} · {formatDate(attachment.created_at)}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <Badge className={ATTACHMENT_CATEGORY_COLORS[attachment.category] || ATTACHMENT_CATEGORY_COLORS.other}>
+                              {ATTACHMENT_CATEGORY_LABELS[attachment.category] || '其他文档'}
+                            </Badge>
+                            <span className="text-xs text-slate-500">{sizeStr} · {formatDate(attachment.created_at)}</span>
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">

@@ -36,6 +36,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
   const persons = getPersons();
   const now = new Date();
   const isEmployee = profile?.role === 'employee';
+  const isManager = profile?.role === 'manager';
 
   const currentPerson = persons.find((person) => person.id === profile?.person_id) ?? null;
   const myTimesheets = getTimesheets();
@@ -45,19 +46,27 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
   const totalMyHours = myTimesheets.reduce((sum, entry) => sum + entry.hours, 0);
   const activeProjectCount = projects.filter((project) => project.status === 'in_progress').length;
 
-  const totalIncome = sumTransactions(transactions, 'income');
-  const totalExpense = sumTransactions(transactions, 'expense');
+  const totalIncome = isManager
+    ? projects.reduce((sum, project) => sum + (project.aggregate_income ?? 0), 0)
+    : sumTransactions(transactions, 'income');
+  const totalExpense = isManager
+    ? projects.reduce((sum, project) => sum + (project.aggregate_expense ?? 0), 0)
+    : sumTransactions(transactions, 'expense');
   const totalProfit = totalIncome - totalExpense;
   const totalBudget = projects.reduce(
     (sum, project) => sum + calculateBudgetTotal(project.budget_labor, project.budget_travel, project.budget_other),
     0,
   );
-  const monthIncome = transactions
-    .filter((tx) => tx.type === 'income' && isSameMonth(tx.transaction_date, now))
-    .reduce((sum, tx) => sum + tx.amount, 0);
-  const monthExpense = transactions
-    .filter((tx) => tx.type === 'expense' && isSameMonth(tx.transaction_date, now))
-    .reduce((sum, tx) => sum + tx.amount, 0);
+  const monthIncome = isManager
+    ? projects.reduce((sum, project) => sum + (project.aggregate_month_income ?? 0), 0)
+    : transactions
+      .filter((tx) => tx.type === 'income' && isSameMonth(tx.transaction_date, now))
+      .reduce((sum, tx) => sum + tx.amount, 0);
+  const monthExpense = isManager
+    ? projects.reduce((sum, project) => sum + (project.aggregate_month_expense ?? 0), 0)
+    : transactions
+      .filter((tx) => tx.type === 'expense' && isSameMonth(tx.transaction_date, now))
+      .reduce((sum, tx) => sum + tx.amount, 0);
   const statusCounts = {
     presales: projects.filter((project) => project.status === 'presales').length,
     in_progress: projects.filter((project) => project.status === 'in_progress').length,
@@ -69,6 +78,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
   const recentTimesheets = myTimesheets.slice(0, 8);
 
   function projectProfit(project: Project): number {
+    if (isManager) return (project.aggregate_income ?? 0) - (project.aggregate_expense ?? 0);
     return projectFinancials(project, transactionsForProject(transactions, project.id)).actualProfit;
   }
 
@@ -179,6 +189,11 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      {isManager && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+          汇总指标覆盖全部项目；底部收支明细仅展示自己负责的项目。
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="实际收入" value={formatCurrency(totalIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
         <StatCard label="实际支出" value={formatCurrency(totalExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />

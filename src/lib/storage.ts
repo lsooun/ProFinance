@@ -1,4 +1,5 @@
 import type {
+  AttachmentCategory,
   BootstrapData,
   InvoicePlan,
   ManagerOption,
@@ -12,6 +13,7 @@ import type {
 } from '@/types';
 import { apiRequest, errorMessage } from '@/lib/api';
 import { notify } from '@/lib/notify';
+import type { TimeUnit } from '@/lib/timeUnits';
 
 let cache: BootstrapData | null = null;
 
@@ -191,6 +193,14 @@ export async function deleteProject(id: string): Promise<boolean> {
   return true;
 }
 
+export function getManageableProjects(user: UserAccount): Project[] {
+  if (user.role === 'admin') return getProjects();
+  if (user.role === 'manager') {
+    return getProjects().filter((project) => project.manager_user_id === user.id);
+  }
+  return getAccessibleProjects(user);
+}
+
 export function getAccessibleProjects(user: UserAccount): Project[] {
   if (user.role === 'admin' || user.role === 'manager') return getProjects();
   if (!user.person_id) return [];
@@ -354,7 +364,7 @@ export function getTimesheetsByPerson(personId: string): TimesheetEntry[] {
 }
 
 export async function createTimesheet(
-  entry: Omit<TimesheetEntry, 'id' | 'created_at'>,
+  entry: Omit<TimesheetEntry, 'id' | 'created_at'> & { hours_unit?: TimeUnit },
 ): Promise<TimesheetEntry | null> {
   const result = await mutate<TimesheetEntry>('/api/timesheets', 'POST', entry);
   if (!result) return null;
@@ -364,7 +374,7 @@ export async function createTimesheet(
 
 export async function updateTimesheet(
   id: string,
-  updates: Partial<TimesheetEntry>,
+  updates: Partial<TimesheetEntry> & { hours_unit?: TimeUnit },
 ): Promise<TimesheetEntry | null> {
   const result = await mutate<TimesheetEntry>(`/api/timesheets/${encodeURIComponent(id)}`, 'PATCH', updates);
   if (!result) return null;
@@ -468,6 +478,7 @@ export async function createAttachment(input: {
   file_name: string;
   file_type: string;
   file_size: number;
+  category: AttachmentCategory;
   data_base64: string;
 }): Promise<ProjectAttachment | null> {
   const result = await mutate<ProjectAttachment>(
@@ -477,6 +488,7 @@ export async function createAttachment(input: {
       file_name: input.file_name,
       file_type: input.file_type,
       file_size: input.file_size,
+      category: input.category,
       data_base64: input.data_base64,
     },
   );

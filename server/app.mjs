@@ -5,8 +5,8 @@ import { openDatabase, hashPassword, verifyPassword, nowISO } from './db.mjs';
 
 const SESSION_COOKIE = 'pf_session';
 const SESSION_DAYS = 7;
-const MAX_JSON_BYTES = 12 * 1024 * 1024;
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_JSON_BYTES = 20 * 1024 * 1024;
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 const PROJECT_STATUSES = ['presales', 'in_progress', 'completed', 'cancelled'];
 const PERSON_ROLES = ['project_manager', 'consultant', 'developer', 'designer', 'qa', 'other'];
@@ -14,6 +14,9 @@ const USER_ROLES = ['admin', 'manager', 'employee'];
 const TRANSACTION_TYPES = ['income', 'expense'];
 const INVOICE_STATUSES = ['unbilled', 'invoiced', 'collected'];
 const BUDGET_CATEGORIES = ['labor', 'travel', 'other'];
+const ATTACHMENT_CATEGORIES = ['cost_sheet', 'contract', 'sow', 'blueprint', 'test_confirmation', 'go_live', 'closure', 'other'];
+const ATTACHMENT_EXTENSIONS = ['.xlsx', '.xls', '.doc', '.docx', '.pdf'];
+const TIME_UNITS = { hour: 1, day: 8, week: 40, month: 174, year: 2088 };
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -65,7 +68,7 @@ function readJson(req) {
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > MAX_JSON_BYTES) {
-        reject(new HttpError(413, '请求内容过大，单个文件不能超过 5 MB'));
+        reject(new HttpError(413, '请求内容过大，单个文件不能超过 10 MB'));
         req.destroy();
         return;
       }
@@ -156,15 +159,29 @@ export function createApp({
     return row;
   };
 
+  const PROJECT_SELECT = `SELECT p.*, u.full_name AS manager_name,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'income') AS aggregate_income,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense') AS aggregate_expense,
+      (SELECT COALESCE(SUM(ts.hours), 0) FROM timesheets ts WHERE ts.project_id = p.id) AS aggregate_hours,
+      (SELECT COALESCE(SUM(a.planned_hours), 0) FROM project_assignments a WHERE a.project_id = p.id) AS aggregate_planned_hours,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'income' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_income,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_expense
+    FROM projects p
+    LEFT JOIN users u ON u.id = p.manager_user_id`;
+
+  const mapProject = (row) => {
+    if (!row) return row;
+    let costSheet = null;
+    if (row.cost_sheet) {
+      try { costSheet = JSON.parse(row.cost_sheet); } catch { costSheet = null; }
+    }
+    return { ...row, cost_sheet: costSheet };
+  };
+
   const projectWithManager = (id) => {
-    const row = db.prepare(
-      `SELECT p.*, u.full_name AS manager_name
-       FROM projects p
-       LEFT JOIN users u ON u.id = p.manager_user_id
-       WHERE p.id = ?`
-    ).get(id);
+    const row = db.prepare(`${PROJECT_SELECT} WHERE p.id = ?`).get(id);
     if (!row) throw new HttpError(404, '项目不存在');
-    return row;
+    return mapProject(row);
   };
 
   const userById = (id) => {
@@ -246,6 +263,16 @@ export function createApp({
     if (user.role !== 'admin') throw new HttpError(403, '仅管理员可以执行此操作');
   }
 
+  function requireProjectManager(user, projectId) {
+    if (user.role === 'admin') return;
+    if (user.role !== 'manager') throw new HttpError(403, '没有执行此操作的权限');
+    const project = db.prepare('SELECT manager_user_id FROM projects WHERE id = ?').get(projectId);
+    if (!project) throw new HttpError(404, '项目不存在');
+    if (project.manager_user_id !== user.id) {
+      throw new HttpError(403, '只能管理自己负责的项目');
+    }
+  }
+
   function ensureProjectAccess(user, projectId) {
     if (user.role !== 'employee') return;
     if (!user.person_id) throw new HttpError(403, '当前账号未关联人员档案');
@@ -259,15 +286,17 @@ export function createApp({
     const allPersons = db.prepare('SELECT * FROM persons ORDER BY name COLLATE NOCASE').all().map(mapPerson);
     const allAssignments = db.prepare('SELECT * FROM project_assignments').all();
     const allTimesheets = db.prepare('SELECT * FROM timesheets ORDER BY date DESC').all();
-    const allProjects = db.prepare(
-      `SELECT p.*, u.full_name AS manager_name
-       FROM projects p
-       LEFT JOIN users u ON u.id = p.manager_user_id
-       ORDER BY p.created_at DESC`
-    ).all();
+    const allProjects = db.prepare(`${PROJECT_SELECT} ORDER BY p.created_at DESC`).all().map(mapProject);
     const allTransactions = db.prepare('SELECT * FROM transactions ORDER BY transaction_date DESC').all();
     const allInvoices = db.prepare('SELECT * FROM invoice_plans ORDER BY date ASC').all();
     const allAttachments = db.prepare('SELECT * FROM attachments ORDER BY created_at DESC').all().map(mapAttachment);
+
+    const managerOptions = db.prepare(
+      `SELECT id, full_name, role
+       FROM users
+       WHERE role = 'manager' AND is_active = 1
+       ORDER BY full_name COLLATE NOCASE`
+    ).all();
 
     if (user.role === 'employee') {
       const projectIds = new Set(
@@ -279,6 +308,7 @@ export function createApp({
         budget_travel: 0,
         budget_other: 0,
         revenue: 0,
+        cost_sheet: null,
       }));
       const scopedAssignments = allAssignments
         .filter((a) => projectIds.has(a.project_id))
@@ -298,23 +328,32 @@ export function createApp({
         attachments: [],
         users: [],
         managerOptions: [],
-        permissions: { canManage: false, isAdmin: false },
+        permissions: { canManage: false, isAdmin: false, canViewAllProjectStats: false },
       };
     }
 
-    let users = [];
-    if (user.role === 'admin') {
-      users = db.prepare(
-        'SELECT id, email, full_name, role, is_active, person_id, created_at FROM users ORDER BY created_at ASC'
-      ).all().map(publicUser);
+    if (user.role === 'manager') {
+      const ownedProjectIds = new Set(
+        allProjects.filter((p) => p.manager_user_id === user.id).map((p) => p.id)
+      );
+      return {
+        user,
+        projects: allProjects,
+        persons: allPersons,
+        assignments: allAssignments.filter((a) => ownedProjectIds.has(a.project_id)),
+        timesheets: allTimesheets.filter((t) => ownedProjectIds.has(t.project_id)),
+        transactions: allTransactions.filter((t) => t.project_id && ownedProjectIds.has(t.project_id)),
+        invoicePlans: allInvoices.filter((i) => ownedProjectIds.has(i.project_id)),
+        attachments: allAttachments.filter((a) => ownedProjectIds.has(a.project_id)),
+        users: [],
+        managerOptions,
+        permissions: { canManage: true, isAdmin: false, canViewAllProjectStats: true },
+      };
     }
 
-    const managerOptions = db.prepare(
-      `SELECT id, full_name, role
-       FROM users
-       WHERE role = 'manager' AND is_active = 1
-       ORDER BY full_name COLLATE NOCASE`
-    ).all();
+    const users = db.prepare(
+      'SELECT id, email, full_name, role, is_active, person_id, created_at FROM users ORDER BY created_at ASC'
+    ).all().map(publicUser);
 
     return {
       user,
@@ -327,7 +366,7 @@ export function createApp({
       attachments: allAttachments,
       users,
       managerOptions,
-      permissions: { canManage: true, isAdmin: user.role === 'admin' },
+      permissions: { canManage: true, isAdmin: true, canViewAllProjectStats: true },
     };
   }
 
@@ -434,6 +473,16 @@ export function createApp({
     if (has('budget_travel')) out.budget_travel = optionalNumber(body.budget_travel, '差旅预算');
     if (has('budget_other')) out.budget_other = optionalNumber(body.budget_other, '其他预算');
     if (has('revenue')) out.revenue = optionalNumber(body.revenue, '合同收入');
+    if (body.cost_sheet !== undefined) {
+      if (body.cost_sheet === null || body.cost_sheet === '') {
+        out.cost_sheet = null;
+      } else {
+        const json = typeof body.cost_sheet === 'string' ? body.cost_sheet : JSON.stringify(body.cost_sheet);
+        if (json.length > 200_000) throw new HttpError(400, 'Cost Sheet 数据过大');
+        try { JSON.parse(json); } catch { throw new HttpError(400, 'Cost Sheet 数据格式不正确'); }
+        out.cost_sheet = json;
+      }
+    }
     return out;
   }
 
@@ -510,6 +559,7 @@ export function createApp({
     if (has('project_id')) {
       const projectId = requiredString(body.project_id, '项目');
       rowById('projects', projectId);
+      if (user.role === 'manager') requireProjectManager(user, projectId);
       out.project_id = projectId;
     }
     if (has('person_id')) {
@@ -523,7 +573,16 @@ export function createApp({
       out.person_id = personId;
     }
     if (has('date')) out.date = requiredDate(body.date, '日期');
-    if (has('hours')) out.hours = requiredNumber(body.hours, '工时', { min: 0.25, max: 24 });
+    if (has('hours')) {
+      const unit = body.hours_unit ?? 'hour';
+      if (!(unit in TIME_UNITS)) throw new HttpError(400, '工时单位无效');
+      const value = requiredNumber(body.hours, '工时', { min: 0.01, max: 100000 });
+      const canonical = Math.round(value * TIME_UNITS[unit] * 100) / 100;
+      if (canonical < 0.25 || canonical > 2088) {
+        throw new HttpError(400, '折算后单条工时需在 0.25–2088 小时之间');
+      }
+      out.hours = canonical;
+    }
     if (has('description')) out.description = optionalString(body.description, { max: 1000 });
 
     if (user.role === 'employee') {
@@ -534,6 +593,11 @@ export function createApp({
         throw new HttpError(403, '只能修改自己的工时记录');
       }
       if (!has('person_id') && !existing) out.person_id = user.person_id;
+    }
+    if (user.role === 'manager') {
+      const projectId = out.project_id ?? existing?.project_id;
+      if (!projectId) throw new HttpError(400, '项目不能为空');
+      requireProjectManager(user, projectId);
     }
     if (!partial) {
       if (!out.project_id) throw new HttpError(400, '项目不能为空');
@@ -706,17 +770,18 @@ export function createApp({
       requireManager(user);
       const body = await readJson(req);
       const fields = parseProject(body);
+      if (user.role === 'manager') fields.manager_user_id = user.id;
       const id = randomUUID();
       const now = nowISO();
       db.prepare(
         `INSERT INTO projects (id, name, description, status, manager_user_id, client, start_date, end_date,
-          budget_labor, budget_travel, budget_other, revenue, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          budget_labor, budget_travel, budget_other, revenue, cost_sheet, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id, fields.name, fields.description ?? '', fields.status ?? 'presales', fields.manager_user_id ?? null,
         fields.client ?? '', fields.start_date ?? null, fields.end_date ?? null,
         fields.budget_labor ?? 0, fields.budget_travel ?? 0, fields.budget_other ?? 0,
-        fields.revenue ?? 0, now, now
+        fields.revenue ?? 0, fields.cost_sheet ?? null, now, now
       );
       sendJson(res, 201, projectWithManager(id));
       return true;
@@ -727,7 +792,11 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       rowById('projects', id);
+      requireProjectManager(user, id);
       const fields = parseProject(await readJson(req), { partial: true });
+      if (user.role === 'manager' && fields.manager_user_id !== undefined && fields.manager_user_id !== user.id) {
+        throw new HttpError(403, '项目经理不能将项目转交给其他人');
+      }
       fields.updated_at = nowISO();
       updateRow('projects', id, fields);
       sendJson(res, 200, projectWithManager(id));
@@ -737,6 +806,7 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       rowById('projects', id);
+      requireProjectManager(user, id);
       const files = db.prepare('SELECT storage_path FROM attachments WHERE project_id = ?').all(id);
       db.exec('BEGIN');
       try {
@@ -758,6 +828,10 @@ export function createApp({
       requireManager(user);
       const body = await readJson(req);
       const fields = parseTransaction(body);
+      if (user.role === 'manager') {
+        if (!fields.project_id) throw new HttpError(403, '项目经理只能为负责的项目记账');
+        requireProjectManager(user, fields.project_id);
+      }
       const normalized = normalizeTransactionLinks({
         type: fields.type,
         projectId: fields.project_id ?? null,
@@ -784,9 +858,17 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       const existing = rowById('transactions', id);
+      if (user.role === 'manager') {
+        if (!existing.project_id) throw new HttpError(403, '只能管理自己负责项目的收支');
+        requireProjectManager(user, existing.project_id);
+      }
       const fields = parseTransaction(await readJson(req), { partial: true });
       const nextType = fields.type ?? existing.type;
       const nextProjectId = fields.project_id !== undefined ? fields.project_id : existing.project_id;
+      if (user.role === 'manager') {
+        if (!nextProjectId) throw new HttpError(403, '项目经理只能为负责的项目记账');
+        requireProjectManager(user, nextProjectId);
+      }
       const nextCategory = fields.category ?? existing.category;
       let nextBudget = fields.budget_category !== undefined ? fields.budget_category : existing.budget_category;
       let nextInvoice = fields.invoice_plan_id !== undefined ? fields.invoice_plan_id : existing.invoice_plan_id;
@@ -821,7 +903,11 @@ export function createApp({
     if (match && method === 'DELETE') {
       requireManager(user);
       const id = match[1];
-      rowById('transactions', id);
+      const existing = rowById('transactions', id);
+      if (user.role === 'manager') {
+        if (!existing.project_id) throw new HttpError(403, '只能管理自己负责项目的收支');
+        requireProjectManager(user, existing.project_id);
+      }
       db.prepare('DELETE FROM transactions WHERE id = ?').run(id);
       sendJson(res, 200, { ok: true });
       return true;
@@ -869,6 +955,7 @@ export function createApp({
       const projectId = requiredString(body.project_id, '项目');
       const personId = requiredString(body.person_id, '人员');
       rowById('projects', projectId);
+      requireProjectManager(user, projectId);
       rowById('persons', personId);
       const existing = db.prepare(
         'SELECT id FROM project_assignments WHERE project_id = ? AND person_id = ?'
@@ -887,7 +974,8 @@ export function createApp({
     if (match && method === 'PATCH') {
       requireManager(user);
       const id = match[1];
-      rowById('project_assignments', id);
+      const existingAssignment = rowById('project_assignments', id);
+      requireProjectManager(user, existingAssignment.project_id);
       const body = await readJson(req);
       const hours = requiredNumber(body.planned_hours, '计划工时', { min: 1, max: 100000 });
       sendJson(res, 200, updateRow('project_assignments', id, { planned_hours: hours }));
@@ -896,7 +984,8 @@ export function createApp({
     if (match && method === 'DELETE') {
       requireManager(user);
       const id = match[1];
-      rowById('project_assignments', id);
+      const existingAssignment = rowById('project_assignments', id);
+      requireProjectManager(user, existingAssignment.project_id);
       db.prepare('DELETE FROM project_assignments WHERE id = ?').run(id);
       sendJson(res, 200, { ok: true });
       return true;
@@ -933,6 +1022,7 @@ export function createApp({
       if (user.role === 'employee' && existing.person_id !== user.person_id) {
         throw new HttpError(403, '只能删除自己的工时记录');
       }
+      if (user.role === 'manager') requireProjectManager(user, existing.project_id);
       db.prepare('DELETE FROM timesheets WHERE id = ?').run(id);
       sendJson(res, 200, { ok: true });
       return true;
@@ -943,6 +1033,7 @@ export function createApp({
       const body = await readJson(req);
       const projectId = requiredString(body.project_id, '项目');
       rowById('projects', projectId);
+      requireProjectManager(user, projectId);
       if (!INVOICE_STATUSES.includes(body.status ?? 'unbilled')) throw new HttpError(400, '回款状态无效');
       const percentage = requiredNumber(body.percentage, '比例', { min: 1, max: 100 });
       const used = db.prepare(
@@ -967,6 +1058,7 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       const existing = rowById('invoice_plans', id);
+      requireProjectManager(user, existing.project_id);
       const body = await readJson(req);
       const fields = {};
       if (body.status !== undefined) {
@@ -991,7 +1083,8 @@ export function createApp({
     if (match && method === 'DELETE') {
       requireManager(user);
       const id = match[1];
-      rowById('invoice_plans', id);
+      const existingInvoice = rowById('invoice_plans', id);
+      requireProjectManager(user, existingInvoice.project_id);
       db.prepare('UPDATE transactions SET invoice_plan_id = NULL WHERE invoice_plan_id = ?').run(id);
       db.prepare('DELETE FROM invoice_plans WHERE id = ?').run(id);
       sendJson(res, 200, { ok: true });
@@ -1003,27 +1096,30 @@ export function createApp({
       requireManager(user);
       const projectId = match[1];
       rowById('projects', projectId);
+      requireProjectManager(user, projectId);
       const body = await readJson(req);
       const fileName = requiredString(body.file_name, '文件名', { max: 255 });
       const ext = path.extname(fileName).toLowerCase();
-      if (!['.xlsx', '.xls'].includes(ext)) {
-        throw new HttpError(400, '仅支持上传 Excel 文件（.xlsx / .xls）');
+      if (!ATTACHMENT_EXTENSIONS.includes(ext)) {
+        throw new HttpError(400, '仅支持上传 Excel、Word、PDF 文件（.xlsx / .xls / .doc / .docx / .pdf）');
       }
+      const category = body.category ?? 'other';
+      if (!ATTACHMENT_CATEGORIES.includes(category)) throw new HttpError(400, '文档类型无效');
       if (typeof body.data_base64 !== 'string' || body.data_base64.length === 0) {
         throw new HttpError(400, '文件内容为空');
       }
       const buffer = Buffer.from(body.data_base64, 'base64');
       if (buffer.length === 0) throw new HttpError(400, '文件内容为空');
-      if (buffer.length > MAX_FILE_BYTES) throw new HttpError(413, '文件大小不能超过 5 MB');
+      if (buffer.length > MAX_FILE_BYTES) throw new HttpError(413, '文件大小不能超过 10 MB');
       const id = randomUUID();
       const storedName = `${id}${ext}`;
       fs.writeFileSync(path.join(uploadDir, storedName), buffer);
       db.prepare(
-        `INSERT INTO attachments (id, project_id, file_name, file_type, file_size, storage_path, uploaded_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO attachments (id, project_id, file_name, file_type, file_size, category, storage_path, uploaded_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id, projectId, fileName, optionalString(body.file_type, { max: 200 }) || 'application/octet-stream',
-        buffer.length, storedName, user.id, nowISO()
+        buffer.length, category, storedName, user.id, nowISO()
       );
       sendJson(res, 201, mapAttachment(rowById('attachments', id)));
       return true;
@@ -1033,6 +1129,7 @@ export function createApp({
     if (match && method === 'GET') {
       requireManager(user);
       const row = rowById('attachments', match[1]);
+      requireProjectManager(user, row.project_id);
       const fullPath = path.join(uploadDir, row.storage_path);
       if (!fullPath.startsWith(path.resolve(uploadDir) + path.sep) || !fs.existsSync(fullPath)) {
         throw new HttpError(404, '附件文件不存在');
@@ -1052,6 +1149,7 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       const row = rowById('attachments', id);
+      requireProjectManager(user, row.project_id);
       db.prepare('DELETE FROM attachments WHERE id = ?').run(id);
       try { fs.unlinkSync(path.join(uploadDir, row.storage_path)); } catch { /* ignore missing file */ }
       sendJson(res, 200, { ok: true });

@@ -63,11 +63,26 @@ export function projectFinancials(
   project: Project,
   projectTransactions: Transaction[],
 ): ProjectFinancials {
+  return buildProjectFinancials(
+    project,
+    sumTransactions(projectTransactions, 'income'),
+    sumTransactions(projectTransactions, 'expense'),
+  );
+}
+
+export function projectFinancialsFromAggregates(project: Project): ProjectFinancials {
+  return buildProjectFinancials(
+    project,
+    project.aggregate_income ?? 0,
+    project.aggregate_expense ?? 0,
+  );
+}
+
+function buildProjectFinancials(project: Project, actualIncome: number, actualExpense: number): ProjectFinancials {
   const budget = calculateBudgetTotal(project.budget_labor, project.budget_travel, project.budget_other);
-  const actualIncome = sumTransactions(projectTransactions, 'income');
-  const actualExpense = sumTransactions(projectTransactions, 'expense');
-  const plannedProfit = project.revenue - budget;
   const actualProfit = actualIncome - actualExpense;
+  const netRevenue = project.cost_sheet?.total_revenue_without_tax ?? project.revenue;
+  const plannedProfit = project.cost_sheet?.gross_margin ?? netRevenue - budget;
   return {
     contractRevenue: project.revenue,
     budget,
@@ -76,7 +91,7 @@ export function projectFinancials(
     actualProfit,
     actualMargin: actualIncome > 0 ? (actualProfit / actualIncome) * 100 : 0,
     plannedProfit,
-    plannedMargin: project.revenue > 0 ? (plannedProfit / project.revenue) * 100 : 0,
+    plannedMargin: netRevenue > 0 ? (plannedProfit / netRevenue) * 100 : 0,
     budgetUsed: budget > 0 ? (actualExpense / budget) * 100 : 0,
   };
 }
