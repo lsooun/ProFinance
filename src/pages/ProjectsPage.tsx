@@ -532,7 +532,23 @@ function ProjectFormModal({
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {calcCard('附加税（13%）', formatCurrency(computedCostSheet.surcharge_tax_hardware), '(硬件收入 − 硬件成本) × 13% × 12%')}
-                  {calcCard('附加税（6%）', formatCurrency(computedCostSheet.surcharge_tax_service), '模板默认未启用（× 0）')}
+                  <div key="service-surcharge" className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs text-slate-500">附加税（6%）</p>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={costInputs.serviceSurchargeEnabled}
+                        aria-label="启用服务附加税（6%）"
+                        onClick={() => setCostInputs((previous) => ({ ...previous, serviceSurchargeEnabled: !previous.serviceSurchargeEnabled }))}
+                        className={`relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors ${costInputs.serviceSurchargeEnabled ? 'bg-blue-600' : 'bg-slate-300'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${costInputs.serviceSurchargeEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </button>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900 mt-0.5">{formatCurrency(computedCostSheet.surcharge_tax_service)}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">服务收入 − 服务成本 − 外包成本 × 6% × 12%</p>
+                  </div>
                   {calcCard('项目审批利润', formatCurrency(computedCostSheet.approval_margin), '= 项目利润 − 风险金 − 附加税 − 财务费用')}
                   {calcCard('审批利润率', `${(computedCostSheet.approval_margin_pct * 100).toFixed(2)}%`, '= 审批利润 ÷ 合计收入')}
                 </div>

@@ -14,6 +14,7 @@ export interface CostSheetInputs {
   contingencyManpowerPct: number;
   otherRisk: number;
   financialInterest: number;
+  serviceSurchargeEnabled: boolean;
 }
 
 export const EMPTY_COST_SHEET_INPUTS: CostSheetInputs = {
@@ -30,6 +31,7 @@ export const EMPTY_COST_SHEET_INPUTS: CostSheetInputs = {
   contingencyManpowerPct: 5,
   otherRisk: 0,
   financialInterest: 0,
+  serviceSurchargeEnabled: false,
 };
 
 function n(value: unknown): number {
@@ -66,6 +68,7 @@ export function costSheetInputsFromData(data?: CostSheetData | null): CostSheetI
     contingencyManpowerPct: data.contingency_manpower_pct ?? legacyPct(data.contingency_manpower, manpowerCost),
     otherRisk: n(data.other_risk),
     financialInterest: n(data.financial_interest),
+    serviceSurchargeEnabled: Boolean(data.service_surcharge_enabled),
   };
 }
 
@@ -97,10 +100,12 @@ export function calculateCostSheet(inputs: CostSheetInputs): CostSheetData {
   const otherRisk = n(inputs.otherRisk);
   const financialInterest = n(inputs.financialInterest);
 
-  // 与 Cost Sheet 模板保持一致：13% 附加税 = 硬件毛利 × 13% × 12%；
-  // 服务 6% 附加税在模板中乘以 0（未启用），因此这里保持 0。
+  // 13% 附加税 = 硬件毛利 × 13% × 12%。
   const surchargeTaxHardware = Math.max(0, (hardwareRevenue - hardwareCost) * 0.13 * 0.12);
-  const surchargeTaxService = 0;
+  // 6% 服务附加税默认关闭；开启后按服务毛利正常计算。
+  const surchargeTaxService = inputs.serviceSurchargeEnabled
+    ? Math.max(0, (serviceRevenue - serviceCost - outsourcingCost) * 0.06 * 0.12)
+    : 0;
 
   const approvalMargin = grossMargin
     - contingencyOutsourcing
@@ -136,6 +141,7 @@ export function calculateCostSheet(inputs: CostSheetInputs): CostSheetData {
     other_risk: round2(otherRisk),
     surcharge_tax_hardware: round2(surchargeTaxHardware),
     surcharge_tax_service: round2(surchargeTaxService),
+    service_surcharge_enabled: inputs.serviceSurchargeEnabled,
     financial_interest: round2(financialInterest),
     approval_margin: round2(approvalMargin),
     approval_margin_pct: approvalMarginPct,

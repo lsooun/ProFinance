@@ -52,6 +52,7 @@ export interface CostSheetData {
   other_risk: number;
   surcharge_tax_hardware: number;
   surcharge_tax_service: number;
+  service_surcharge_enabled?: boolean;
   financial_interest: number;
   approval_margin: number;
   approval_margin_pct: number;
