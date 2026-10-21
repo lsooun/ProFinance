@@ -404,7 +404,19 @@ export function createApp({
       fields.email = email;
     }
     if (Object.keys(fields).length === 0) throw new HttpError(400, '没有需要更新的内容');
+    const previous = db.prepare('SELECT id, email, person_id FROM users WHERE id = ?').get(user.id);
+    const person = previous?.person_id
+      ? db.prepare('SELECT * FROM persons WHERE id = ?').get(previous.person_id)
+      : null;
     const updated = updateRow('users', user.id, fields);
+    if (person) {
+      if (fields.full_name !== undefined) {
+        db.prepare('UPDATE persons SET name = ? WHERE id = ?').run(fields.full_name, person.id);
+      }
+      if (fields.email !== undefined && (!person.email || person.email.toLowerCase() === previous.email.toLowerCase())) {
+        db.prepare('UPDATE persons SET email = ? WHERE id = ?').run(fields.email, person.id);
+      }
+    }
     sendJson(res, 200, { user: publicUser(updated) });
   }
 
@@ -664,19 +676,29 @@ export function createApp({
       const password = typeof body.password === 'string' ? body.password : '';
       if (password.length < 6) throw new HttpError(400, '密码至少需要 6 个字符');
       if (!USER_ROLES.includes(body.role)) throw new HttpError(400, '用户角色无效');
-      let personId = null;
+      let person = null;
       if (body.person_id) {
-        rowById('persons', body.person_id);
-        personId = body.person_id;
+        person = rowById('persons', body.person_id);
+        const existingAccount = db.prepare('SELECT id FROM users WHERE person_id = ?').get(body.person_id);
+        if (existingAccount) throw new HttpError(400, '该人员已开通登录账号');
       }
+      if (body.role !== 'admin' && !person) {
+        throw new HttpError(400, '项目经理和普通员工必须关联人员档案');
+      }
+      const fullName = person
+        ? person.name
+        : requiredString(body.full_name, '姓名', { max: 80 });
       const id = randomUUID();
       db.prepare(
         `INSERT INTO users (id, email, password_hash, full_name, role, is_active, person_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
-        id, email, hashPassword(password), requiredString(body.full_name, '姓名', { max: 80 }),
-        body.role, boolInt(body.is_active !== false), personId, nowISO()
+        id, email, hashPassword(password), fullName,
+        body.role, boolInt(body.is_active !== false), person?.id ?? null, nowISO()
       );
+      if (person && !person.email) {
+        db.prepare('UPDATE persons SET email = ? WHERE id = ? AND (email IS NULL OR email = \'\')').run(email, person.id);
+      }
       sendJson(res, 201, { user: publicUser(userById(id)) });
       return true;
     }
@@ -716,11 +738,17 @@ export function createApp({
         fields.role = body.role;
       }
       if (body.is_active !== undefined) fields.is_active = boolInt(body.is_active);
+      let linkedPerson = target.person_id
+        ? db.prepare('SELECT * FROM persons WHERE id = ?').get(target.person_id)
+        : null;
       if (body.person_id !== undefined) {
         if (body.person_id) {
-          rowById('persons', body.person_id);
+          linkedPerson = rowById('persons', body.person_id);
+          const existingAccount = db.prepare('SELECT id FROM users WHERE person_id = ? AND id <> ?').get(body.person_id, id);
+          if (existingAccount) throw new HttpError(400, '该人员已开通登录账号');
           fields.person_id = body.person_id;
         } else {
+          linkedPerson = null;
           fields.person_id = null;
         }
       }
@@ -730,6 +758,7 @@ export function createApp({
       }
 
       const nextRole = fields.role ?? target.role;
+      const nextPersonId = fields.person_id !== undefined ? fields.person_id : target.person_id;
       const nextActive = fields.is_active ?? target.is_active;
       const removesActiveAdmin = target.role === 'admin' && !!target.is_active &&
         (nextRole !== 'admin' || !nextActive);
@@ -739,10 +768,21 @@ export function createApp({
         ).get('admin', id).count;
         if (activeAdmins === 0) throw new HttpError(400, '系统必须至少保留一个启用的管理员');
       }
+      if (nextRole !== 'admin' && !nextPersonId) {
+        throw new HttpError(400, '项目经理和普通员工必须关联人员档案');
+      }
       if (id === user.id && fields.is_active !== undefined && !fields.is_active) {
         throw new HttpError(400, '不能停用当前登录账号');
       }
       const updated = updateRow('users', id, fields);
+      if (linkedPerson) {
+        if (fields.full_name !== undefined) {
+          db.prepare('UPDATE persons SET name = ? WHERE id = ?').run(fields.full_name, linkedPerson.id);
+        }
+        if (fields.email !== undefined && (!linkedPerson.email || linkedPerson.email.toLowerCase() === target.email.toLowerCase())) {
+          db.prepare('UPDATE persons SET email = ? WHERE id = ?').run(fields.email, linkedPerson.id);
+        }
+      }
       if (fields.password_hash && id !== user.id) {
         db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
       }
@@ -932,8 +972,30 @@ export function createApp({
     if (match && method === 'PATCH') {
       requireManager(user);
       const id = match[1];
-      rowById('persons', id);
-      sendJson(res, 200, mapPerson(updateRow('persons', id, parsePerson(await readJson(req), { partial: true }))));
+      const existingPerson = rowById('persons', id);
+      const fields = parsePerson(await readJson(req), { partial: true });
+      const linkedAccount = db.prepare(
+        'SELECT id, email FROM users WHERE person_id = ?'
+      ).get(id);
+      if (fields.email !== undefined && linkedAccount && fields.email && (
+        !existingPerson.email || existingPerson.email.toLowerCase() === linkedAccount.email.toLowerCase()
+      )) {
+        const conflict = db.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id <> ?')
+          .get(fields.email, linkedAccount.id);
+        if (conflict) throw new HttpError(400, '该邮箱已被其他账号使用');
+      }
+      const updatedPerson = updateRow('persons', id, fields);
+      if (linkedAccount) {
+        if (fields.name !== undefined) {
+          db.prepare('UPDATE users SET full_name = ? WHERE id = ?').run(fields.name, linkedAccount.id);
+        }
+        if (fields.email !== undefined && fields.email && (
+          !existingPerson.email || existingPerson.email.toLowerCase() === linkedAccount.email.toLowerCase()
+        )) {
+          db.prepare('UPDATE users SET email = ? WHERE id = ?').run(fields.email, linkedAccount.id);
+        }
+      }
+      sendJson(res, 200, mapPerson(updatedPerson));
       return true;
     }
     if (match && method === 'DELETE') {
@@ -942,7 +1004,7 @@ export function createApp({
       rowById('persons', id);
       const linkedUser = db.prepare('SELECT full_name FROM users WHERE person_id = ?').get(id);
       if (linkedUser) {
-        throw new HttpError(400, `该人员已关联用户“${linkedUser.full_name}”，请先解除账号关联`);
+        throw new HttpError(400, `该人员已开通登录账号“${linkedUser.full_name}”，请先在账号管理中删除对应账号`);
       }
       db.prepare('DELETE FROM persons WHERE id = ?').run(id);
       sendJson(res, 200, { ok: true });

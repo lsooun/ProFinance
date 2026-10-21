@@ -63,6 +63,13 @@ export async function createUser(
   if (!result) return null;
   const store = data();
   store.users.push(result.user);
+  if (result.user.person_id) {
+    store.persons = store.persons.map((person) =>
+      person.id === result.user.person_id
+        ? { ...person, name: result.user.full_name, email: person.email || result.user.email }
+        : person,
+    );
+  }
   syncManagerOption(result.user);
   return result.user;
 }
@@ -73,6 +80,7 @@ export async function updateUser(
     password?: string;
   },
 ): Promise<UserAccount | null> {
+  const before = data().users.find((user) => user.id === id) ?? null;
   const result = await mutate<{ user: UserAccount }>(`/api/users/${encodeURIComponent(id)}`, 'PATCH', updates);
   if (!result) return null;
   const store = data();
@@ -82,6 +90,17 @@ export async function updateUser(
   store.projects = store.projects.map((project) =>
     project.manager_user_id === id ? { ...project, manager_name: result.user.full_name } : project,
   );
+  if (result.user.person_id) {
+    store.persons = store.persons.map((person) => {
+      if (person.id !== result.user.person_id) return person;
+      const syncEmail = !person.email || (before ? person.email.toLowerCase() === before.email.toLowerCase() : false);
+      return {
+        ...person,
+        name: result.user.full_name,
+        email: syncEmail ? result.user.email : person.email,
+      };
+    });
+  }
   syncManagerOption(result.user);
   return result.user;
 }
@@ -125,6 +144,7 @@ function syncManagerOption(user: UserAccount): void {
 }
 
 export async function updateOwnProfile(fullName: string, email: string): Promise<UserAccount | null> {
+  const previous = data().user;
   const result = await mutate<{ user: UserAccount }>('/api/auth/profile', 'PATCH', {
     full_name: fullName,
     email,
@@ -134,6 +154,17 @@ export async function updateOwnProfile(fullName: string, email: string): Promise
   store.user = result.user;
   const index = store.users.findIndex((user) => user.id === result.user.id);
   if (index !== -1) store.users[index] = result.user;
+  if (result.user.person_id) {
+    store.persons = store.persons.map((person) => {
+      if (person.id !== result.user.person_id) return person;
+      const syncEmail = !person.email || (previous ? person.email.toLowerCase() === previous.email.toLowerCase() : false);
+      return {
+        ...person,
+        name: result.user.full_name,
+        email: syncEmail ? result.user.email : person.email,
+      };
+    });
+  }
   store.projects = store.projects.map((project) =>
     project.manager_user_id === result.user.id ? { ...project, manager_name: result.user.full_name } : project,
   );
@@ -284,11 +315,27 @@ export async function createPerson(
 }
 
 export async function updatePerson(id: string, updates: Partial<Person>): Promise<Person | null> {
+  const beforePerson = data().persons.find((person) => person.id === id) ?? null;
+  const linkedUser = data().users.find((user) => user.person_id === id) ?? null;
   const result = await mutate<Person>(`/api/persons/${encodeURIComponent(id)}`, 'PATCH', updates);
   if (!result) return null;
   const store = data();
   const index = store.persons.findIndex((person) => person.id === id);
   if (index !== -1) store.persons[index] = result;
+  if (linkedUser) {
+    const syncEmail = !beforePerson?.email || beforePerson.email.toLowerCase() === linkedUser.email.toLowerCase();
+    const updatedUser = {
+      ...linkedUser,
+      full_name: result.name,
+      email: syncEmail && result.email ? result.email : linkedUser.email,
+    };
+    store.users = store.users.map((user) => user.id === linkedUser.id ? updatedUser : user);
+    if (store.user.id === linkedUser.id) store.user = updatedUser;
+    store.projects = store.projects.map((project) =>
+      project.manager_user_id === linkedUser.id ? { ...project, manager_name: result.name } : project,
+    );
+    syncManagerOption(updatedUser);
+  }
   return result;
 }
 

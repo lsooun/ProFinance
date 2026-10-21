@@ -35,7 +35,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'timesheets', label: '工时管理', icon: Clock },
   { key: 'personnel', label: '人员管理', icon: UserCog, managerUp: true },
   { key: 'reports', label: '统计报表', icon: FileBarChart, managerUp: true },
-  { key: 'users', label: '用户管理', icon: Users, adminOnly: true },
+  { key: 'users', label: '账号管理', icon: Users, adminOnly: true },
 ];
 
 export default function AppLayout({

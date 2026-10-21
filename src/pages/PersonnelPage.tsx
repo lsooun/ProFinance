@@ -8,25 +8,60 @@ import {
 } from '@/types';
 import {
   getPersons, createPerson, updatePerson, deletePerson,
-  getPersonActualHours, getAssignmentsByPerson,
+  getPersonActualHours, getAssignmentsByPerson, getUsers, createUser,
 } from '@/lib/storage';
+import { useAuth } from '@/context/auth-context';
+import type { UserAccount, UserRole } from '@/types';
 import {
-  UserPlus, Pencil, Trash2, Users, AlertCircle, Mail, Phone, Briefcase, Clock,
+  UserPlus, Pencil, Trash2, Users, AlertCircle, Mail, Phone, Briefcase, Clock, KeyRound, Settings,
 } from 'lucide-react';
 
 const ALL_ROLES: PersonRole[] = ['project_manager', 'consultant', 'developer', 'designer', 'qa', 'other'];
 
-export default function PersonnelPage() {
+export default function PersonnelPage({ onManageAccounts }: { onManageAccounts?: () => void }) {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === 'admin';
   const [persons, setPersons] = useState<Person[]>(getPersons());
+  const [accounts, setAccounts] = useState<UserAccount[]>(isAdmin ? getUsers() : []);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingPerson, setEditingPerson] = useState<Person | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Person | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [accountPerson, setAccountPerson] = useState<Person | null>(null);
+  const [accountEmail, setAccountEmail] = useState('');
+  const [accountPassword, setAccountPassword] = useState('');
+  const [accountRole, setAccountRole] = useState<UserRole>('employee');
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [accountSaving, setAccountSaving] = useState(false);
 
   function reload() {
     setPersons(getPersons());
+    setAccounts(isAdmin ? getUsers() : []);
+  }
+
+  function openAccount(person: Person) {
+    setAccountPerson(person);
+    setAccountEmail(person.email || '');
+    setAccountPassword('');
+    setAccountRole(person.role === 'project_manager' ? 'manager' : 'employee');
+    setAccountError(null);
+  }
+
+  async function handleCreateAccount(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accountPerson) return;
+    setAccountError(null);
+    if (!accountEmail.trim()) { setAccountError('请填写登录邮箱'); return; }
+    if (accountPassword.length < 6) { setAccountError('密码至少需要 6 个字符'); return; }
+    setAccountSaving(true);
+    const created = await createUser(accountPerson.name, accountEmail.trim(), accountPassword, accountRole, accountPerson.id);
+    setAccountSaving(false);
+    if (created) {
+      setAccountPerson(null);
+      reload();
+    }
   }
 
   const filtered = persons.filter((person) => {
@@ -126,6 +161,21 @@ export default function PersonnelPage() {
                   <div className="flex items-center gap-2 text-sm text-slate-600">
                     <Phone className="w-3.5 h-3.5 text-slate-400" /> {person.phone || '—'}
                   </div>
+                  {isAdmin && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-500">登录账号</span>
+                      {(() => {
+                        const account = accounts.find((item) => item.person_id === person.id);
+                        if (!account) return <span className="text-xs text-slate-400">未开通</span>;
+                        return (
+                          <span className={`inline-flex items-center gap-1 text-xs font-medium ${account.is_active ? 'text-emerald-700' : 'text-slate-500'}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${account.is_active ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                            {account.is_active ? '已开通' : '已停用'}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 pt-3 border-t border-slate-100">
@@ -146,6 +196,18 @@ export default function PersonnelPage() {
                 <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
                   <span className="text-xs text-slate-400">创建于 {formatDate(person.created_at)}</span>
                   <div className="flex items-center gap-1">
+                    {isAdmin && (() => {
+                      const account = accounts.find((item) => item.person_id === person.id);
+                      return account ? (
+                        <Button variant="ghost" size="sm" onClick={onManageAccounts} title="账号管理">
+                          <Settings className="w-3.5 h-3.5" /> 账号
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" onClick={() => openAccount(person)} title="开通登录账号">
+                          <KeyRound className="w-3.5 h-3.5" /> 开通账号
+                        </Button>
+                      );
+                    })()}
                     <Button variant="ghost" size="sm" onClick={() => openEdit(person)} title="编辑"><Pencil className="w-3.5 h-3.5" /></Button>
                     <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(person)} className="text-rose-600 hover:bg-rose-50" title="删除"><Trash2 className="w-3.5 h-3.5" /></Button>
                   </div>
@@ -165,6 +227,31 @@ export default function PersonnelPage() {
         />
       )}
 
+      {accountPerson && (
+        <Modal open onClose={() => setAccountPerson(null)} title={`为 ${accountPerson.name} 开通登录账号`}>
+          <form onSubmit={handleCreateAccount} className="space-y-4">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <p className="text-sm font-semibold text-slate-900">{accountPerson.name}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{accountPerson.department || '未填写部门'} · {PERSON_ROLE_LABELS[accountPerson.role]}</p>
+            </div>
+            <Input label="登录邮箱" type="email" required value={accountEmail} onChange={(e) => setAccountEmail(e.target.value)} placeholder="user@company.com" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Select label="系统角色" value={accountRole} onChange={(e) => setAccountRole(e.target.value as UserRole)}>
+                <option value="employee">普通员工</option>
+                <option value="manager">项目经理</option>
+              </Select>
+              <Input label="初始密码" type="password" required minLength={6} value={accountPassword} onChange={(e) => setAccountPassword(e.target.value)} placeholder="至少 6 个字符" autoComplete="new-password" />
+            </div>
+            <p className="text-xs text-slate-400">账号会自动关联当前人员档案；姓名以人员档案为准。</p>
+            {accountError && <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{accountError}</div>}
+            <div className="flex justify-end gap-3 pt-2">
+              <Button type="button" variant="outline" onClick={() => setAccountPerson(null)} disabled={accountSaving}>取消</Button>
+              <Button type="submit" disabled={accountSaving}>{accountSaving ? '开通中…' : '开通账号'}</Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {deleteTarget && (
         <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="删除人员" size="sm">
           <div className="space-y-4">
@@ -174,7 +261,7 @@ export default function PersonnelPage() {
               </div>
               <p className="text-sm text-slate-700">
                 确定删除 <span className="font-semibold">{deleteTarget.name}</span> 吗？
-                其项目分配和工时记录将一并删除。若该人员已关联用户账号，请先解除关联后再删除。
+                其项目分配和工时记录将一并删除。若该人员已开通登录账号，请先在账号管理中删除账号后再删除人员。
               </p>
             </div>
             <div className="flex justify-end gap-3">

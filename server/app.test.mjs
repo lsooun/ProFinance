@@ -39,6 +39,17 @@ async function login(email, password = '123456') {
   return result.cookie;
 }
 
+async function createTestPerson(name, emailPrefix) {
+  const email = `${emailPrefix}.${Date.now()}.${Math.floor(Math.random() * 10000)}@company.com`;
+  const result = await api('/api/persons', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { name, role: 'other', email, phone: '', department: '测试部', is_active: true },
+  });
+  assert.equal(result.status, 201, `person create failed: ${JSON.stringify(result.data)}`);
+  return result.data;
+}
+
 before(async () => {
   tempDir = mkdtempSync(path.join(tmpdir(), 'profinance-test-'));
   app = createApp({
@@ -314,10 +325,11 @@ test('回款节点可以编辑日期、节点和比例', async () => {
 test('用户可以修改自己的资料，管理员可生成一次性重置链接', async () => {
   const stamp = Date.now();
   const email = `profile.${stamp}@company.com`;
+  const person = await createTestPerson('资料测试', 'test.person.profile');
   const created = await api('/api/users', {
     method: 'POST',
     cookie: adminCookie,
-    body: { full_name: '资料测试', email, password: '123456', role: 'manager', person_id: null },
+    body: { full_name: '资料测试', email, password: '123456', role: 'manager', person_id: person.id },
   });
   assert.equal(created.status, 201);
   const userId = created.data.user.id;
@@ -363,6 +375,9 @@ test('用户可以修改自己的资料，管理员可生成一次性重置链�
     cookie: adminCookie,
   });
   assert.equal(removed.status, 200);
+  const personAfter = (await api('/api/bootstrap', { cookie: adminCookie })).data.persons.find((item) => item.id === person.id);
+  assert.equal(personAfter.name, '资料测试改名');
+  await api(`/api/persons/${person.id}`, { method: 'DELETE', cookie: adminCookie });
 });
 
 test('收支支持预算分类和回款节点关联校验', async () => {
@@ -533,8 +548,7 @@ test('工时支持天/周/月/年单位并统一折算为小时存储', async ()
 });
 
 test('所有角色的用户都可以关联人员档案', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: adminCookie });
-  const person = bootstrap.data.persons.find((item) => item.is_active);
+  const person = await createTestPerson('人员关联测试', 'test.person.link');
   const stamp = Date.now();
   const created = await api('/api/users', {
     method: 'POST',
@@ -556,6 +570,48 @@ test('所有角色的用户都可以关联人员档案', async () => {
   assert.equal(updated.data.user.person_id, person.id);
 
   await api(`/api/users/${created.data.user.id}`, { method: 'DELETE', cookie: adminCookie });
+  await api(`/api/persons/${person.id}`, { method: 'DELETE', cookie: adminCookie });
+});
+
+test('项目经理和员工账号必须关联唯一人员档案', async () => {
+  const person = await createTestPerson('唯一账号测试', 'test.person.unique');
+  const noPerson = await api('/api/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { full_name: '无人员', email: `no.person.${Date.now()}@company.com`, password: '123456', role: 'manager' },
+  });
+  assert.equal(noPerson.status, 400);
+  assert.match(noPerson.data.error, /人员/);
+
+  const email = `unique.account.${Date.now()}@company.com`;
+  const created = await api('/api/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { full_name: '不应覆盖人员姓名', email, password: '123456', role: 'employee', person_id: person.id },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.user.person_id, person.id);
+  assert.equal(created.data.user.full_name, person.name);
+
+  const duplicate = await api('/api/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { full_name: '重复账号', email: `duplicate.${Date.now()}@company.com`, password: '123456', role: 'employee', person_id: person.id },
+  });
+  assert.equal(duplicate.status, 400);
+  assert.match(duplicate.data.error, /已开通/);
+
+  const renamed = await api(`/api/persons/${person.id}`, {
+    method: 'PATCH',
+    cookie: adminCookie,
+    body: { name: '唯一账号改名' },
+  });
+  assert.equal(renamed.status, 200);
+  const users = (await api('/api/bootstrap', { cookie: adminCookie })).data.users;
+  assert.equal(users.find((u) => u.id === created.data.user.id).full_name, '唯一账号改名');
+
+  await api(`/api/users/${created.data.user.id}`, { method: 'DELETE', cookie: adminCookie });
+  await api(`/api/persons/${person.id}`, { method: 'DELETE', cookie: adminCookie });
 });
 
 test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async () => {
@@ -619,6 +675,19 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
   assert.equal(deleted.status, 200);
 });
 
+test('管理员账号可以不关联人员档案', async () => {
+  const email = `admin.only.${Date.now()}@company.com`;
+  const created = await api('/api/users', {
+    method: 'POST',
+    cookie: adminCookie,
+    body: { full_name: '独立管理员', email, password: '123456', role: 'admin', person_id: null },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.user.person_id, null);
+  assert.equal(created.data.user.role, 'admin');
+  await api(`/api/users/${created.data.user.id}`, { method: 'DELETE', cookie: adminCookie });
+});
+
 test('最后一名管理员不能被降级、停用或删除', async () => {
   const me = (await api('/api/bootstrap', { cookie: adminCookie })).data.user;
 
@@ -646,6 +715,7 @@ test('最后一名管理员不能被降级、停用或删除', async () => {
 
 test('管理员可以新增用户、重置密码，密码修改生效', async () => {
   const email = `test.user.${Date.now()}@company.com`;
+  const person = await createTestPerson('测试用户', 'test.person.user');
   const created = await api('/api/users', {
     method: 'POST',
     cookie: adminCookie,
@@ -654,7 +724,7 @@ test('管理员可以新增用户、重置密码，密码修改生效', async ()
       email,
       password: '123456',
       role: 'manager',
-      person_id: null,
+      person_id: person.id,
     },
   });
   assert.equal(created.status, 201);
@@ -720,6 +790,7 @@ test('管理员可以新增用户、重置密码，密码修改生效', async ()
 
   const optionsAfterDelete = await api('/api/bootstrap', { cookie: adminCookie });
   assert.ok(!optionsAfterDelete.data.managerOptions.some((option) => option.full_name === '测试用户'));
+  await api(`/api/persons/${person.id}`, { method: 'DELETE', cookie: adminCookie });
 });
 
 test('附件上传、下载、删除走服务端存储', async () => {

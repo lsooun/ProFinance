@@ -310,6 +310,44 @@ function migrateDatabase(db) {
     db.exec("ALTER TABLE attachments ADD COLUMN category TEXT NOT NULL DEFAULT 'other'");
   }
 
+  // 项目经理/员工账号补齐人员档案，并保证一个人员最多一个登录账号。
+  const missingPersonAccounts = db.prepare(
+    "SELECT id, full_name, email, role FROM users WHERE role <> 'admin' AND person_id IS NULL"
+  ).all();
+  for (const account of missingPersonAccounts) {
+    let person = null;
+    if (account.email) {
+      person = db.prepare(
+        'SELECT p.id FROM persons p WHERE lower(p.email) = lower(?) AND NOT EXISTS (SELECT 1 FROM users u WHERE u.person_id = p.id) LIMIT 1'
+      ).get(account.email);
+    }
+    if (!person && account.full_name) {
+      person = db.prepare(
+        'SELECT p.id FROM persons p WHERE p.name = ? AND NOT EXISTS (SELECT 1 FROM users u WHERE u.person_id = p.id) LIMIT 1'
+      ).get(account.full_name);
+    }
+    let personId = person?.id;
+    if (!personId) {
+      personId = randomUUID();
+      db.prepare(
+        `INSERT INTO persons (id, name, role, email, phone, department, is_active, created_at)
+         VALUES (?, ?, ?, ?, '', '', 1, ?)`
+      ).run(
+        personId, account.full_name || account.email || '未命名人员',
+        account.role === 'manager' ? 'project_manager' : 'other',
+        account.email || '', nowISO(),
+      );
+    }
+    db.prepare('UPDATE users SET person_id = ? WHERE id = ?').run(personId, account.id);
+  }
+
+  const duplicatePersonLink = db.prepare(
+    'SELECT person_id FROM users WHERE person_id IS NOT NULL GROUP BY person_id HAVING COUNT(*) > 1 LIMIT 1'
+  ).get();
+  if (!duplicatePersonLink) {
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_person_unique ON users(person_id) WHERE person_id IS NOT NULL');
+  }
+
   const transactionColumns = db.prepare('PRAGMA table_info(transactions)').all().map((column) => column.name);
   if (!transactionColumns.includes('budget_category')) {
     db.exec('ALTER TABLE transactions ADD COLUMN budget_category TEXT');

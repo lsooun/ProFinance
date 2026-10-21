@@ -4,7 +4,7 @@ import {
   Card, Button, Input, Select, Modal, Badge, EmptyState,
 } from '@/components/ui';
 import { formatDate } from '@/lib/format';
-import type { UserRole, UserAccount } from '@/types';
+import { PERSON_ROLE_LABELS, type UserRole, type UserAccount } from '@/types';
 import {
   getUsers, createUser, updateUser, deleteUser, getPersons, createPasswordResetToken,
 } from '@/lib/storage';
@@ -105,8 +105,8 @@ export default function UsersPage() {
     <div className="space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">用户账号</h2>
-          <p className="text-sm text-slate-500 mt-0.5">管理登录账号、角色权限与密码。</p>
+          <h2 className="text-lg font-semibold text-slate-900">账号管理</h2>
+          <p className="text-sm text-slate-500 mt-0.5">管理登录账号、角色权限与密码；项目经理和员工账号请在人员管理中开通。</p>
         </div>
         <div className="relative lg:ml-auto">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -118,13 +118,13 @@ export default function UsersPage() {
             className="w-full lg:w-64 rounded-lg border border-slate-300 pl-9 pr-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
           />
         </div>
-        <Button onClick={openNew}><UserPlus className="w-4 h-4" /> 新增用户</Button>
+        <Button onClick={openNew}><UserPlus className="w-4 h-4" /> 新增管理员账号</Button>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="p-4 flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center"><Users className="w-5 h-5 text-slate-600" /></div>
-          <div><p className="text-xs text-slate-500">用户总数</p><p className="text-lg font-bold text-slate-900">{users.length}</p></div>
+          <div><p className="text-xs text-slate-500">账号总数</p><p className="text-lg font-bold text-slate-900">{users.length}</p></div>
         </Card>
         <Card className="p-4 flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center"><Shield className="w-5 h-5 text-blue-600" /></div>
@@ -137,7 +137,7 @@ export default function UsersPage() {
       </div>
 
       {filteredUsers.length === 0 ? (
-        <Card className="p-6"><EmptyState icon={<Users className="w-6 h-6" />} title="没有匹配的用户" description="请调整搜索条件。" /></Card>
+        <Card className="p-6"><EmptyState icon={<Users className="w-6 h-6" />} title="没有匹配的账号" description="请调整搜索条件。" /></Card>
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -276,12 +276,14 @@ function UserFormModal({
   currentUserId: string | null;
   onSaved: () => void | Promise<void>;
 }) {
-  const [fullName, setFullName] = useState(user?.full_name || '');
-  const [role, setRole] = useState<UserRole>(user?.role || 'manager');
+  const linkedPerson = user?.person_id
+    ? getPersons().find((person) => person.id === user.person_id) ?? null
+    : null;
+  const [fullName, setFullName] = useState(linkedPerson?.name || user?.full_name || '');
+  const [role, setRole] = useState<UserRole>(user?.role || 'admin');
   const [email, setEmail] = useState(user?.email || '');
   const [password, setPassword] = useState('');
   const [isActive, setIsActive] = useState(user?.is_active ?? true);
-  const [personId, setPersonId] = useState<string>(user?.person_id || '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -292,37 +294,52 @@ function UserFormModal({
       setError('密码至少需要 6 个字符');
       return;
     }
-
     if (user) {
       setSaving(true);
       const updates: Parameters<typeof updateUser>[1] = {
-        full_name: fullName,
         email,
-        role,
+        role: linkedPerson ? role : 'admin',
         is_active: user.id === currentUserId ? true : isActive,
-        person_id: personId || null,
       };
+      if (!linkedPerson) updates.full_name = fullName;
       if (password) updates.password = password;
       const updated = await updateUser(user.id, updates);
       setSaving(false);
       if (updated) await onSaved();
     } else {
-      if (!email || !password) { setError('新增用户必须填写邮箱和密码'); return; }
+      if (!fullName.trim() || !email || !password) {
+        setError('新增管理员账号必须填写姓名、邮箱和密码');
+        return;
+      }
       if (password.length < 6) { setError('密码至少需要 6 个字符'); return; }
       setSaving(true);
-      const created = await createUser(fullName, email, password, role, personId || null);
+      const created = await createUser(fullName, email, password, 'admin', null);
       setSaving(false);
       if (created) await onSaved();
     }
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={user ? '编辑用户' : '新增用户'}>
+    <Modal open={open} onClose={onClose} title={user ? '编辑账号' : '新增管理员账号'}>
       <form onSubmit={handleSave} className="space-y-4">
-        <Input label="姓名" required value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="张三" />
+        {linkedPerson ? (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+            <p className="text-xs text-slate-500">人员信息</p>
+            <p className="text-sm font-semibold text-slate-900 mt-0.5">{linkedPerson.name}</p>
+            <p className="text-xs text-slate-500 mt-0.5">{linkedPerson.department || '未填写部门'} · {PERSON_ROLE_LABELS[linkedPerson.role]}</p>
+            <p className="text-[11px] text-slate-400 mt-1">姓名以人员档案为准；登录邮箱在下方维护。</p>
+          </div>
+        ) : (
+          <>
+            <Input label="姓名" required value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="张三" />
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              管理员账号不关联人员档案。项目经理和员工账号请到“人员管理”中开通。
+            </div>
+          </>
+        )}
 
         <div className="space-y-1.5">
-          <label className="block text-sm font-medium text-slate-700">邮箱</label>
+          <label className="block text-sm font-medium text-slate-700">登录邮箱</label>
           <div className="relative">
             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="user@company.com"
@@ -342,30 +359,31 @@ function UserFormModal({
         />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Select label="角色" value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
-            <option value="manager">项目经理</option>
-            <option value="admin">管理员</option>
-            <option value="employee">普通员工</option>
-          </Select>
+          {linkedPerson ? (
+            <Select label="系统角色" value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
+              <option value="manager">项目经理</option>
+              <option value="employee">普通员工</option>
+              <option value="admin">管理员</option>
+            </Select>
+          ) : (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">系统角色</label>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">管理员</div>
+            </div>
+          )}
           <Select
             label="状态"
             value={isActive ? 'active' : 'inactive'}
             onChange={(e) => setIsActive(e.target.value === 'active')}
-            disabled={user?.id === currentUserId}
+            disabled={user?.id === currentUserId || !user}
           >
             <option value="active">启用</option>
             <option value="inactive">停用</option>
           </Select>
         </div>
 
-        <Select label="关联人员档案（可选）" value={personId} onChange={(e) => setPersonId(e.target.value)}>
-          <option value="">不关联人员</option>
-          {getPersons().filter((person) => person.is_active).map((person) => <option key={person.id} value={person.id}>{person.name} — {person.department || '未填写部门'}</option>)}
-        </Select>
-        <p className="-mt-2 text-xs text-slate-400">所有角色都可以关联人员档案；关联后可用于工时、项目成员和绩效统计。</p>
-
         <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 text-xs text-slate-500 leading-relaxed">
-          <strong className="text-slate-700">管理员</strong>：全部权限，包含用户管理。<br />
+          <strong className="text-slate-700">管理员</strong>：全部权限，包含账号与人员管理。<br />
           <strong className="text-slate-700">项目经理</strong>：查看全部项目汇总统计；管理自己负责项目的明细、收支、人员、工时与报表。<br />
           <strong className="text-slate-700">普通员工</strong>：只能查看被分配的项目，并填报自己的工时。
         </div>
@@ -374,7 +392,7 @@ function UserFormModal({
 
         <div className="flex justify-end gap-3 pt-2">
           <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
-          <Button type="submit" disabled={saving}>{saving ? '保存中…' : user ? '保存修改' : '创建用户'}</Button>
+          <Button type="submit" disabled={saving}>{saving ? '保存中…' : user ? '保存修改' : '创建管理员账号'}</Button>
         </div>
       </form>
     </Modal>

@@ -89,7 +89,7 @@ function AppContent() {
   } else if (route.page === 'timesheets') {
     content = <TimesheetPage />;
   } else if (route.page === 'personnel' && isManagerUp) {
-    content = <PersonnelPage />;
+    content = <PersonnelPage onManageAccounts={() => navigate('/users')} />;
   } else if (route.page === 'reports' && isManagerUp) {
     content = <ReportsPage />;
   } else if (route.page === 'users' && user.role === 'admin') {
