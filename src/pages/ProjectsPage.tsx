@@ -23,7 +23,7 @@ import {
 import { useAuth } from '@/context/auth-context';
 import {
   Plus, FolderKanban, Search, Pencil, Trash2, Filter, X,
-  DollarSign, TrendingUp, AlertCircle, Clock, Briefcase, Calculator,
+  DollarSign, TrendingUp, AlertCircle, Clock, Briefcase,
 } from 'lucide-react';
 
 const ALL_STATUSES: ProjectStatus[] = ['presales', 'in_progress', 'completed', 'cancelled'];
@@ -465,12 +465,6 @@ function ProjectFormModal({
 
         {costSheetMode ? (
           <>
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 pt-1">
-              <Calculator className="w-4 h-4 text-slate-400" /> Cost Sheet 明细计算
-            </div>
-            <p className="text-xs text-slate-500 -mt-2">
-              金额单位：人民币元。项目预算和合同收入将按 Cost Sheet 自动生成，无需手工填写。
-            </p>
             <div className="space-y-5">
               <section className="space-y-3">
                 <h4 className="text-sm font-semibold text-slate-900 border-b border-slate-200 pb-2">合同与收入</h4>
