@@ -403,30 +403,27 @@ function ProjectFormModal({
     if (saved) onSaved();
   }
 
-  const moneyInput = (key: keyof CostSheetInputs, label: string, note: string) => (
-    <tr key={key} className="border-b border-slate-100 last:border-0">
-      <td className="py-1.5 pr-3 text-slate-700">{label}</td>
-      <td className="py-1.5 px-2 text-right">
-        <input
-          type="number"
-          min="0"
-          step="0.01"
-          value={costInputs[key] as number}
-          onChange={(e) => setCostField(key, e.target.value)}
-          className="w-32 rounded-md border border-slate-300 px-2 py-1 text-right text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-          aria-label={label}
-        />
-      </td>
-      <td className="py-1.5 pl-3 text-[11px] text-slate-400">{note}</td>
-    </tr>
+  const costInput = (key: keyof CostSheetInputs, label: string, note?: string) => (
+    <div key={key}>
+      <Input
+        label={label}
+        type="number"
+        min="0"
+        step="0.01"
+        value={costInputs[key] as number}
+        onChange={(e) => setCostField(key, e.target.value)}
+        aria-label={label}
+      />
+      {note && <p className="mt-1 text-[11px] text-slate-400">{note}</p>}
+    </div>
   );
 
-  const computedRow = (label: string, value: string, note: string) => (
-    <tr key={label} className="border-b border-slate-100 last:border-0 bg-slate-50/60">
-      <td className="py-1.5 pr-3 font-medium text-slate-800">{label}</td>
-      <td className="py-1.5 px-2 text-right font-semibold text-slate-900">{value}</td>
-      <td className="py-1.5 pl-3 text-[11px] text-slate-400">{note}</td>
-    </tr>
+  const calcCard = (label: string, value: string, note?: string) => (
+    <div key={label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="text-sm font-semibold text-slate-900 mt-0.5">{value}</p>
+      {note && <p className="text-[11px] text-slate-400 mt-0.5">{note}</p>}
+    </div>
   );
 
   return (
@@ -474,85 +471,87 @@ function ProjectFormModal({
             <p className="text-xs text-slate-500 -mt-2">
               金额单位：人民币元。项目预算和合同收入将按 Cost Sheet 自动生成，无需手工填写。
             </p>
-            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-50">
-                  <tr className="text-left text-slate-500 border-b border-slate-200">
-                    <th className="px-3 py-2 font-medium">明细类别</th>
-                    <th className="px-2 py-2 font-medium text-right">金额 / 比例</th>
-                    <th className="px-3 py-2 font-medium">计算说明</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><td colSpan={3} className="px-3 py-1.5 bg-blue-50/70 text-[11px] font-semibold text-blue-900">合同与收入</td></tr>
-                  {moneyInput('hardwareContract', '硬件和软件合同金额（含税 13%）', '合同金额（含税）')}
-                  {moneyInput('serviceContract', '服务合同金额（含税 6%）', '合同金额（含税）')}
-                  {computedRow('合同总金额（TCV）', formatCurrency(computedCostSheet.total_contract_with_tax), '= 硬件/软件合同 + 服务合同')}
-                  {computedRow('硬件和软件收入（不含 13% 税）', formatCurrency(computedCostSheet.hardware_revenue_without_tax), '= 硬件/软件合同 ÷ 1.13')}
-                  {computedRow('服务收入（不含 6% 税）', formatCurrency(computedCostSheet.service_revenue_without_tax), '= 服务合同 ÷ 1.06')}
-                  {computedRow('合计收入', formatCurrency(computedCostSheet.total_revenue_without_tax), '= 硬件收入 + 服务收入')}
-                  <tr><td colSpan={3} className="px-3 py-1.5 bg-blue-50/70 text-[11px] font-semibold text-blue-900">成本</td></tr>
-                  {moneyInput('hardwareCost', '硬件和软件成本（不含税）', '硬件/软件成本')}
-                  {moneyInput('serviceCost', '服务成本（不含税）', '服务交付成本')}
-                  {moneyInput('outsourcingCost', '第三方服务 / 外包成本（不含税）', '外包或分包成本')}
-                  {moneyInput('manpowerCost', '人力费用', '内部人力成本')}
-                  {moneyInput('otherExpense', '其他费用（差旅等）', '差旅、招待及其他')}
-                  {moneyInput('travelCost', '其中：差旅费用', '用于项目预算的差旅拆分')}
-                  {moneyInput('withholdingTax', '预提税', '预提税及其他税费')}
-                  {computedRow('合计成本', formatCurrency(computedCostSheet.total_cost), '= 上述成本合计')}
-                  <tr><td colSpan={3} className="px-3 py-1.5 bg-blue-50/70 text-[11px] font-semibold text-blue-900">利润与风险</td></tr>
-                  {computedRow('项目利润', formatCurrency(computedCostSheet.gross_margin), '= 合计收入 − 合计成本')}
-                  {computedRow('项目利润率', `${(computedCostSheet.gross_margin_pct * 100).toFixed(2)}%`, '= 项目利润 ÷ 合计收入')}
-                  <tr className="border-b border-slate-100">
-                    <td className="py-1.5 pr-3 text-slate-700">第三方服务风险金</td>
-                    <td className="py-1.5 px-2">
-                      <div className="flex items-center justify-end gap-1">
-                        <input
-                          type="number" min="0" max="100" step="0.1"
-                          value={costInputs.contingencyOutsourcingPct}
-                          onChange={(e) => setCostField('contingencyOutsourcingPct', e.target.value)}
-                          className="w-16 rounded-md border border-slate-300 px-2 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                          aria-label="第三方服务风险金比例"
-                        />
-                        <span className="text-slate-500">%</span>
-                        <span className="ml-1 font-semibold text-slate-900">{formatCurrency(computedCostSheet.contingency_outsourcing)}</span>
-                      </div>
-                    </td>
-                    <td className="py-1.5 pl-3 text-[11px] text-slate-400">= 外包成本 × 比例</td>
-                  </tr>
-                  <tr className="border-b border-slate-100">
-                    <td className="py-1.5 pr-3 text-slate-700">人力风险金</td>
-                    <td className="py-1.5 px-2">
-                      <div className="flex items-center justify-end gap-1">
-                        <input
-                          type="number" min="0" max="100" step="0.1"
-                          value={costInputs.contingencyManpowerPct}
-                          onChange={(e) => setCostField('contingencyManpowerPct', e.target.value)}
-                          className="w-16 rounded-md border border-slate-300 px-2 py-1 text-right text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                          aria-label="人力风险金比例"
-                        />
-                        <span className="text-slate-500">%</span>
-                        <span className="ml-1 font-semibold text-slate-900">{formatCurrency(computedCostSheet.contingency_manpower)}</span>
-                      </div>
-                    </td>
-                    <td className="py-1.5 pl-3 text-[11px] text-slate-400">= 人力费用 × 比例</td>
-                  </tr>
-                  {moneyInput('otherRisk', '其他风险', '其他风险准备')}
-                  {computedRow('附加税（13%）', formatCurrency(computedCostSheet.surcharge_tax_hardware), '= (硬件收入 − 硬件成本) × 13% × 12%')}
-                  {computedRow('附加税（6%）', formatCurrency(computedCostSheet.surcharge_tax_service), '模板默认未启用（× 0）')}
-                  {moneyInput('financialInterest', '财务利息 / 保函费用', '资金成本或保函费用')}
-                  {computedRow('项目审批利润', formatCurrency(computedCostSheet.approval_margin), '= 项目利润 − 风险金 − 附加税 − 财务费用')}
-                  {computedRow('审批利润率', `${(computedCostSheet.approval_margin_pct * 100).toFixed(2)}%`, '= 审批利润 ÷ 合计收入')}
-                </tbody>
-              </table>
-            </div>
-            <div className="rounded-lg border border-slate-200 p-4">
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
-                <div><p className="text-xs text-slate-500">人力预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_labor)}</p></div>
-                <div><p className="text-xs text-slate-500">差旅预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_travel)}</p></div>
-                <div><p className="text-xs text-slate-500">其他预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_other)}</p></div>
-                <div><p className="text-xs text-slate-500">预算总额</p><p className="mt-1 font-bold text-slate-900">{formatCurrency(totalBudget)}</p></div>
-                <div><p className="text-xs text-slate-500">合同收入（含税）</p><p className="mt-1 font-bold text-slate-900">{formatCurrency(derived.revenue)}</p></div>
+            <div className="space-y-5">
+              <section className="space-y-3">
+                <h4 className="text-sm font-semibold text-slate-900 border-b border-slate-200 pb-2">合同与收入</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {costInput('hardwareContract', '硬件和软件合同金额（含税 13%）', '合同金额（含税）')}
+                  {costInput('serviceContract', '服务合同金额（含税 6%）', '合同金额（含税）')}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {calcCard('合同总金额（TCV）', formatCurrency(computedCostSheet.total_contract_with_tax), '= 硬件/软件合同 + 服务合同')}
+                  {calcCard('硬件/软件收入（不含 13% 税）', formatCurrency(computedCostSheet.hardware_revenue_without_tax), '= 合同金额 ÷ 1.13')}
+                  {calcCard('服务收入（不含 6% 税）', formatCurrency(computedCostSheet.service_revenue_without_tax), '= 合同金额 ÷ 1.06')}
+                  {calcCard('合计收入', formatCurrency(computedCostSheet.total_revenue_without_tax), '= 硬件收入 + 服务收入')}
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <h4 className="text-sm font-semibold text-slate-900 border-b border-slate-200 pb-2">成本</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {costInput('hardwareCost', '硬件和软件成本（不含税）', '硬件/软件成本')}
+                  {costInput('serviceCost', '服务成本（不含税）', '服务交付成本')}
+                  {costInput('outsourcingCost', '第三方服务 / 外包成本（不含税）', '外包或分包成本')}
+                  {costInput('manpowerCost', '人力费用', '内部人力成本')}
+                  {costInput('otherExpense', '其他费用（差旅等）', '差旅、招待及其他')}
+                  {costInput('travelCost', '其中：差旅费用', '用于项目预算的差旅拆分')}
+                  {costInput('withholdingTax', '预提税', '预提税及其他税费')}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {calcCard('合计成本', formatCurrency(computedCostSheet.total_cost), '= 上述成本合计')}
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <h4 className="text-sm font-semibold text-slate-900 border-b border-slate-200 pb-2">利润与风险</h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {calcCard('项目利润', formatCurrency(computedCostSheet.gross_margin), '= 合计收入 − 合计成本')}
+                  {calcCard('项目利润率', `${(computedCostSheet.gross_margin_pct * 100).toFixed(2)}%`, '= 项目利润 ÷ 合计收入')}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Input
+                      label="第三方服务风险金比例（%）"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={costInputs.contingencyOutsourcingPct}
+                      onChange={(e) => setCostField('contingencyOutsourcingPct', e.target.value)}
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">风险金：{formatCurrency(computedCostSheet.contingency_outsourcing)}（外包成本 × 比例）</p>
+                  </div>
+                  <div>
+                    <Input
+                      label="人力风险金比例（%）"
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={costInputs.contingencyManpowerPct}
+                      onChange={(e) => setCostField('contingencyManpowerPct', e.target.value)}
+                    />
+                    <p className="mt-1 text-[11px] text-slate-400">风险金：{formatCurrency(computedCostSheet.contingency_manpower)}（人力费用 × 比例）</p>
+                  </div>
+                  {costInput('otherRisk', '其他风险', '其他风险准备')}
+                  {costInput('financialInterest', '财务利息 / 保函费用', '资金成本或保函费用')}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {calcCard('附加税（13%）', formatCurrency(computedCostSheet.surcharge_tax_hardware), '(硬件收入 − 硬件成本) × 13% × 12%')}
+                  {calcCard('附加税（6%）', formatCurrency(computedCostSheet.surcharge_tax_service), '模板默认未启用（× 0）')}
+                  {calcCard('项目审批利润', formatCurrency(computedCostSheet.approval_margin), '= 项目利润 − 风险金 − 附加税 − 财务费用')}
+                  {calcCard('审批利润率', `${(computedCostSheet.approval_margin_pct * 100).toFixed(2)}%`, '= 审批利润 ÷ 合计收入')}
+                </div>
+              </section>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+                  <div><p className="text-xs text-slate-500">人力预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_labor)}</p></div>
+                  <div><p className="text-xs text-slate-500">差旅预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_travel)}</p></div>
+                  <div><p className="text-xs text-slate-500">其他预算</p><p className="mt-1 font-semibold text-slate-900">{formatCurrency(derived.budget_other)}</p></div>
+                  <div><p className="text-xs text-slate-500">预算总额</p><p className="mt-1 font-bold text-slate-900">{formatCurrency(totalBudget)}</p></div>
+                  <div><p className="text-xs text-slate-500">合同收入（含税）</p><p className="mt-1 font-bold text-slate-900">{formatCurrency(derived.revenue)}</p></div>
+                </div>
               </div>
             </div>
           </>
