@@ -423,9 +423,14 @@ export default function ProjectDetailPage({
           )}
 
           <Card className="p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <FileText className="w-5 h-5 text-slate-400" />
-              <h3 className="text-base font-semibold text-slate-900">回款计划</h3>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-slate-400" />
+                <h3 className="text-base font-semibold text-slate-900">回款计划</h3>
+              </div>
+              {canAddInvoice && (
+                <Button size="sm" onClick={openNewInvoice}><Plus className="w-4 h-4" /> 新增回款节点</Button>
+              )}
             </div>
 
             {invoicePlans.length === 0 ? (
@@ -635,7 +640,12 @@ export default function ProjectDetailPage({
       )}
 
       <Card className="p-5">
-        <h3 className="text-base font-semibold text-slate-900 mb-4">项目成员</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-base font-semibold text-slate-900">项目成员</h3>
+          {canManage && (
+            <Button size="sm" onClick={openNewAssignment}><Plus className="w-4 h-4" /> 分配成员</Button>
+          )}
+        </div>
         {assignments.length === 0 ? (
           <EmptyState
             icon={<Users className="w-6 h-6" />}
@@ -810,7 +820,10 @@ export default function ProjectDetailPage({
           </Card>
 
           <Card className="p-5">
-            <h3 className="text-base font-semibold text-slate-900 mb-4">项目收支</h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-semibold text-slate-900">项目收支</h3>
+              <Button size="sm" onClick={() => onAddTransaction?.(project.id)}><Plus className="w-4 h-4" /> 新增收支</Button>
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
               <div className="flex items-center gap-2.5 rounded-lg bg-emerald-50 px-3 py-2.5">
