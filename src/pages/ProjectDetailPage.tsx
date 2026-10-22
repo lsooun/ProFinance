@@ -423,14 +423,9 @@ export default function ProjectDetailPage({
           )}
 
           <Card className="p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-slate-400" />
-                <h3 className="text-base font-semibold text-slate-900">回款计划</h3>
-              </div>
-              {canAddInvoice && (
-                <Button size="sm" onClick={openNewInvoice}><Plus className="w-4 h-4" /> 新增回款节点</Button>
-              )}
+            <div className="flex items-center gap-2 mb-4">
+              <FileText className="w-5 h-5 text-slate-400" />
+              <h3 className="text-base font-semibold text-slate-900">回款计划</h3>
             </div>
 
             {invoicePlans.length === 0 ? (
