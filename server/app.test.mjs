@@ -263,10 +263,10 @@ test('新建项目必须选择合法分类，分类可以修改', async () => {
 
   const created = await api('/api/projects', {
     method: 'POST', cookie: managerCookie,
-    body: { name: '分类测试项目', description: '', status: 'presales', category: 'erp_mixed' },
+    body: { name: '分类测试项目', description: '', status: 'presales', category: 'erp_delivery' },
   });
   assert.equal(created.status, 201);
-  assert.equal(created.data.category, 'erp_mixed');
+  assert.equal(created.data.category, 'erp_delivery');
 
   const patched = await api(`/api/projects/${created.data.id}`, {
     method: 'PATCH', cookie: managerCookie, body: { category: 'integration_implementation' },

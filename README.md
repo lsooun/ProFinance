@@ -191,11 +191,11 @@ docker compose start app
 
 | 分类编码 | 显示名称 |
 |---|---|
-| `erp_implementation` | ERP实施类 |
-| `erp_secondary_development` | ERP二开类 |
-| `erp_mixed` | ERP实施+二开类 |
+| `erp_delivery` | ERP交付类 |
 | `custom_development` | 定制开发类 |
 | `integration_implementation` | 集成实施类 |
+| `operations_service` | 运维服务类 |
+| `consulting_service` | 咨询服务类 |
 | `other` | 其他 |
 
 历史项目保留为“未分类”，不自动归类；可在编辑项目时补充分类。

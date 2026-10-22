@@ -1,50 +1,30 @@
 export type ProjectStatus = 'presales' | 'in_progress' | 'completed' | 'cancelled';
 
 export type ProjectCategory =
-  | 'erp_implementation'
-  | 'erp_secondary_development'
-  | 'erp_mixed'
+  | 'erp_delivery'
   | 'custom_development'
   | 'integration_implementation'
+  | 'operations_service'
+  | 'consulting_service'
   | 'other';
 
 export const PROJECT_CATEGORY_LABELS: Record<ProjectCategory, string> = {
-  erp_implementation: 'ERP实施类',
-  erp_secondary_development: 'ERP二开类',
-  erp_mixed: 'ERP实施+二开类',
+  erp_delivery: 'ERP交付类',
   custom_development: '定制开发类',
   integration_implementation: '集成实施类',
+  operations_service: '运维服务类',
+  consulting_service: '咨询服务类',
   other: '其他',
 };
 
 export const PROJECT_CATEGORY_COLORS: Record<ProjectCategory, string> = {
-  erp_implementation: 'bg-indigo-50 text-indigo-700 border-indigo-200',
-  erp_secondary_development: 'bg-blue-50 text-blue-700 border-blue-200',
-  erp_mixed: 'bg-violet-50 text-violet-700 border-violet-200',
+  erp_delivery: 'bg-indigo-50 text-indigo-700 border-indigo-200',
   custom_development: 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
   integration_implementation: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+  operations_service: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  consulting_service: 'bg-amber-50 text-amber-700 border-amber-200',
   other: 'bg-slate-100 text-slate-600 border-slate-200',
 };
-
-export type UserRole = 'admin' | 'manager' | 'employee';
-
-export interface UserAccount {
-  id: string;
-  email: string;
-  full_name: string;
-  role: UserRole;
-  is_active: boolean;
-  person_id: string | null;
-  created_at: string;
-}
-
-export type Profile = UserAccount;
-
-export interface ManagerOption {
-  id: string;
-  full_name: string;
-  role: UserRole;
-}
 
 export interface CostSheetMilestone {
   stage: string;
@@ -92,6 +72,27 @@ export interface CostSheetData {
   payment_milestones?: CostSheetMilestone[];
   warnings?: string[];
 }
+
+export type UserRole = 'admin' | 'manager' | 'employee';
+
+export interface UserAccount {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
+  person_id: string | null;
+  created_at: string;
+}
+
+export type Profile = UserAccount;
+
+export interface ManagerOption {
+  id: string;
+  full_name: string;
+  role: UserRole;
+}
+
 
 export interface Project {
   id: string;

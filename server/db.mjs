@@ -308,6 +308,11 @@ function migrateDatabase(db) {
   if (!columns.includes('category')) {
     db.exec('ALTER TABLE projects ADD COLUMN category TEXT');
   }
+  db.exec(`
+    UPDATE projects
+    SET category = 'erp_delivery'
+    WHERE category IN ('erp_implementation', 'erp_secondary_development', 'erp_mixed')
+  `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category)');
 
   const attachmentColumns = db.prepare('PRAGMA table_info(attachments)').all().map((column) => column.name);

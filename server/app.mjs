@@ -9,7 +9,7 @@ const MAX_JSON_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 const PROJECT_STATUSES = ['presales', 'in_progress', 'completed', 'cancelled'];
-const PROJECT_CATEGORIES = ['erp_implementation', 'erp_secondary_development', 'erp_mixed', 'custom_development', 'integration_implementation', 'other'];
+const PROJECT_CATEGORIES = ['erp_delivery', 'custom_development', 'integration_implementation', 'operations_service', 'consulting_service', 'other'];
 const PERSON_ROLES = ['project_manager', 'consultant', 'developer', 'designer', 'qa', 'other'];
 const USER_ROLES = ['admin', 'manager', 'employee'];
 const TRANSACTION_TYPES = ['income', 'expense'];
