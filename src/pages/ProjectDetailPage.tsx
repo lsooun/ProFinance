@@ -11,7 +11,7 @@ import {
   INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS,
   ATTACHMENT_CATEGORY_LABELS, ATTACHMENT_CATEGORY_COLORS,
   type AttachmentCategory, type Project, type Transaction, type Person, type ProjectAssignment,
-  type TimesheetEntry, type InvoicePlan, type ProjectAttachment, type InvoiceStatus,
+  type TimesheetEntry, type InvoicePlan, type ProjectAttachment, type InvoiceStatus, type CostSheetVersionSummary,
 } from '@/types';
 import {
   getProjectById, getTransactionsByProject,
@@ -19,13 +19,13 @@ import {
   getTimesheetsByProject, getProjectActualHours, getProjectPlannedHours,
   getPersons,
   getInvoicePlansByProject, getInvoicePlanTotalPercentage, createInvoicePlan, deleteInvoicePlan, updateInvoicePlan,
-  getAttachmentsByProject, createAttachment, deleteAttachment, getAttachmentDownloadUrl,
+  getAttachmentsByProject, createAttachment, deleteAttachment, getAttachmentDownloadUrl, getCostSheetVersions,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
 import {
   ArrowLeft, Calendar, User, Target, TrendingUp, TrendingDown,
   Wallet, Plus, ArrowUpRight, ArrowDownRight, Clock, Users, Trash2, Pencil,
-  FileText, Paperclip, Download, Upload, FileSpreadsheet, DollarSign, ShieldAlert, FileType2,
+  FileText, Paperclip, Download, Upload, FileSpreadsheet, DollarSign, ShieldAlert, FileType2, History,
 } from 'lucide-react';
 
 export default function ProjectDetailPage({
@@ -54,6 +54,10 @@ export default function ProjectDetailPage({
   const [uploading, setUploading] = useState(false);
   const [uploadCategory, setUploadCategory] = useState<AttachmentCategory>('contract');
   const [attachmentFilter, setAttachmentFilter] = useState<AttachmentCategory | 'all'>('all');
+  const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [costSheetVersions, setCostSheetVersions] = useState<CostSheetVersionSummary[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
   const visibleAttachments = attachmentFilter === 'all'
     ? attachments
     : attachments.filter((attachment) => attachment.category === attachmentFilter);
@@ -208,6 +212,19 @@ export default function ProjectDetailPage({
     setAssignModalOpen(true);
   }
 
+  async function openCostSheetVersions() {
+    setVersionModalOpen(true);
+    setVersionsLoading(true);
+    setVersionsError(null);
+    try {
+      setCostSheetVersions(await getCostSheetVersions(projectId));
+    } catch {
+      setVersionsError('版本历史加载失败，请稍后重试。');
+    } finally {
+      setVersionsLoading(false);
+    }
+  }
+
   function handleDownload(attachment: ProjectAttachment) {
     const link = document.createElement('a');
     link.href = getAttachmentDownloadUrl(attachment.id);
@@ -322,7 +339,19 @@ export default function ProjectDetailPage({
                   <FileSpreadsheet className="w-5 h-5 text-blue-500" />
                   <h3 className="text-base font-semibold text-slate-900">Cost Sheet 分析</h3>
                 </div>
-                <span className="text-xs text-slate-400">按项目费用明细自动计算</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-slate-400">
+                    {project.cost_sheet_version
+                      ? `当前版本 v${project.cost_sheet_version}${project.cost_sheet_baseline_version ? ` · 基线 v${project.cost_sheet_baseline_version}` : ''}`
+                      : '按项目费用明细自动计算'}
+                    {project.cost_sheet_updated_at && ` · 更新于 ${formatDate(project.cost_sheet_updated_at)}`}
+                  </span>
+                  {project.cost_sheet_version && (
+                    <Button size="sm" variant="outline" onClick={() => void openCostSheetVersions()}>
+                      <History className="w-3.5 h-3.5" /> 历史版本
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                 {[
@@ -862,6 +891,55 @@ export default function ProjectDetailPage({
           </Card>
         </>
       )}
+
+      <Modal open={versionModalOpen} onClose={() => setVersionModalOpen(false)} title="Cost Sheet 版本历史" size="lg">
+        {versionsLoading ? (
+          <div className="py-10 text-center text-sm text-slate-500">正在加载版本历史…</div>
+        ) : versionsError ? (
+          <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{versionsError}</div>
+        ) : costSheetVersions.length === 0 ? (
+          <div className="py-10 text-center text-sm text-slate-500">暂无历史版本。</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50">
+                <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                  <th className="px-3 py-2.5 font-medium">版本</th>
+                  <th className="px-3 py-2.5 font-medium">合同总额</th>
+                  <th className="px-3 py-2.5 font-medium">不含税收入</th>
+                  <th className="px-3 py-2.5 font-medium">总成本</th>
+                  <th className="px-3 py-2.5 font-medium">毛利</th>
+                  <th className="px-3 py-2.5 font-medium">审批利润</th>
+                  <th className="px-3 py-2.5 font-medium">创建信息</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {costSheetVersions.map((version) => (
+                  <tr key={version.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-slate-900">v{version.version}</span>
+                        {version.is_current && <Badge className="bg-blue-50 text-blue-700 border-blue-200">当前</Badge>}
+                        {version.is_baseline && <Badge className="bg-violet-50 text-violet-700 border-violet-200">基线</Badge>}
+                        {!version.is_current && !version.is_baseline && <Badge className="bg-slate-100 text-slate-500 border-slate-200">历史</Badge>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{formatCurrency(version.total_contract)}</td>
+                    <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{formatCurrency(version.revenue_without_tax)}</td>
+                    <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{formatCurrency(version.total_cost)}</td>
+                    <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{formatCurrency(version.gross_margin)}</td>
+                    <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{formatCurrency(version.approval_margin)}</td>
+                    <td className="px-3 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+                      <p>{version.created_by_name || '系统迁移'}</p>
+                      <p>{formatDate(version.created_at)}</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Modal>
 
       {assignModalOpen && (
         <AssignMemberModal

@@ -83,6 +83,30 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 
+CREATE TABLE IF NOT EXISTS project_cost_sheet_versions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'saved',
+  is_current INTEGER NOT NULL DEFAULT 0,
+  is_baseline INTEGER NOT NULL DEFAULT 0,
+  total_contract REAL NOT NULL DEFAULT 0,
+  revenue_without_tax REAL NOT NULL DEFAULT 0,
+  total_cost REAL NOT NULL DEFAULT 0,
+  gross_margin REAL NOT NULL DEFAULT 0,
+  approval_margin REAL NOT NULL DEFAULT 0,
+  details_json TEXT NOT NULL,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  approved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  approved_at TEXT,
+  change_reason TEXT NOT NULL DEFAULT '',
+  UNIQUE (project_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_cost_sheet_versions_project ON project_cost_sheet_versions(project_id, version);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_sheet_versions_current ON project_cost_sheet_versions(project_id) WHERE is_current = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_sheet_versions_baseline ON project_cost_sheet_versions(project_id) WHERE is_baseline = 1;
+
 CREATE TABLE IF NOT EXISTS project_assignments (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -314,6 +338,32 @@ function migrateDatabase(db) {
     WHERE category IN ('erp_implementation', 'erp_secondary_development', 'erp_mixed')
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category)');
+
+  // 将旧的项目 Cost Sheet JSON 迁移为独立版本表的第 1 版。
+  const legacyCostSheets = db.prepare(
+    "SELECT id, cost_sheet, updated_at FROM projects WHERE cost_sheet IS NOT NULL AND cost_sheet <> ''"
+  ).all();
+  for (const project of legacyCostSheets) {
+    const existingVersion = db.prepare(
+      'SELECT id FROM project_cost_sheet_versions WHERE project_id = ? LIMIT 1'
+    ).get(project.id);
+    if (existingVersion) continue;
+    let data;
+    try { data = JSON.parse(project.cost_sheet); } catch { continue; }
+    const number = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+    db.prepare(
+      `INSERT INTO project_cost_sheet_versions (
+        id, project_id, version, status, is_current, is_baseline,
+        total_contract, revenue_without_tax, total_cost, gross_margin, approval_margin,
+        details_json, created_by, created_at, approved_by, approved_at, change_reason
+      ) VALUES (?, ?, 1, 'saved', 1, 1, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, '')
+    `).run(
+      randomUUID(), project.id,
+      number(data.total_contract_with_tax), number(data.total_revenue_without_tax),
+      number(data.total_cost), number(data.gross_margin), number(data.approval_margin),
+      project.cost_sheet, project.updated_at || nowISO(),
+    );
+  }
 
   const attachmentColumns = db.prepare('PRAGMA table_info(attachments)').all().map((column) => column.name);
   if (!attachmentColumns.includes('category')) {

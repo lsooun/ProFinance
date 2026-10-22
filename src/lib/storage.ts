@@ -1,6 +1,7 @@
 import type {
   AttachmentCategory,
   BootstrapData,
+  CostSheetVersionSummary,
   InvoicePlan,
   ManagerOption,
   Person,
@@ -506,6 +507,14 @@ export async function deleteInvoicePlan(id: string): Promise<boolean> {
 
 export function getAllInvoicePlans(): InvoicePlan[] {
   return getInvoicePlans();
+}
+
+// ===== Cost Sheet versions =====
+
+export async function getCostSheetVersions(projectId: string): Promise<CostSheetVersionSummary[]> {
+  return apiRequest<CostSheetVersionSummary[]>(
+    `/api/projects/${encodeURIComponent(projectId)}/cost-sheet-versions`,
+  );
 }
 
 // ===== Attachments =====

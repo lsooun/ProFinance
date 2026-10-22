@@ -166,17 +166,33 @@ export function createApp({
       (SELECT COALESCE(SUM(ts.hours), 0) FROM timesheets ts WHERE ts.project_id = p.id) AS aggregate_hours,
       (SELECT COALESCE(SUM(a.planned_hours), 0) FROM project_assignments a WHERE a.project_id = p.id) AS aggregate_planned_hours,
       (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'income' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_income,
-      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_expense
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_expense,
+      (SELECT v.details_json FROM project_cost_sheet_versions v WHERE v.project_id = p.id AND v.is_current = 1 LIMIT 1) AS cost_sheet_json,
+      (SELECT v.version FROM project_cost_sheet_versions v WHERE v.project_id = p.id AND v.is_current = 1 LIMIT 1) AS cost_sheet_version,
+      (SELECT v.created_at FROM project_cost_sheet_versions v WHERE v.project_id = p.id AND v.is_current = 1 LIMIT 1) AS cost_sheet_updated_at,
+      (SELECT v.version FROM project_cost_sheet_versions v WHERE v.project_id = p.id AND v.is_baseline = 1 LIMIT 1) AS cost_sheet_baseline_version
     FROM projects p
     LEFT JOIN users u ON u.id = p.manager_user_id`;
 
   const mapProject = (row) => {
     if (!row) return row;
+    const rawCostSheet = row.cost_sheet_json ?? row.cost_sheet;
     let costSheet = null;
-    if (row.cost_sheet) {
-      try { costSheet = JSON.parse(row.cost_sheet); } catch { costSheet = null; }
+    if (rawCostSheet) {
+      try { costSheet = JSON.parse(rawCostSheet); } catch { costSheet = null; }
     }
-    return { ...row, cost_sheet: costSheet };
+    const {
+      cost_sheet_json: _costSheetJson,
+      cost_sheet: _legacyCostSheet,
+      ...rest
+    } = row;
+    return {
+      ...rest,
+      cost_sheet: costSheet,
+      cost_sheet_version: row.cost_sheet_version ?? null,
+      cost_sheet_updated_at: row.cost_sheet_updated_at ?? null,
+      cost_sheet_baseline_version: row.cost_sheet_baseline_version ?? null,
+    };
   };
 
   const projectWithManager = (id) => {
@@ -184,6 +200,62 @@ export function createApp({
     if (!row) throw new HttpError(404, '项目不存在');
     return mapProject(row);
   };
+
+  function normalizeCostSheetJson(jsonText) {
+    try {
+      const parsed = JSON.parse(jsonText);
+      delete parsed.updated_at;
+      const ordered = {};
+      for (const key of Object.keys(parsed).sort()) ordered[key] = parsed[key];
+      return JSON.stringify(ordered);
+    } catch {
+      return null;
+    }
+  }
+
+  function saveCostSheetVersion(projectId, jsonText, userId) {
+    const current = db.prepare(
+      'SELECT version, details_json FROM project_cost_sheet_versions WHERE project_id = ? AND is_current = 1'
+    ).get(projectId);
+    if (current && normalizeCostSheetJson(current.details_json) === normalizeCostSheetJson(jsonText)) {
+      return current.version;
+    }
+    let data;
+    try { data = JSON.parse(jsonText); } catch { throw new HttpError(400, 'Cost Sheet 数据格式不正确'); }
+    const number = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+    const max = db.prepare(
+      'SELECT COALESCE(MAX(version), 0) AS version FROM project_cost_sheet_versions WHERE project_id = ?'
+    ).get(projectId).version;
+    const version = max + 1;
+    const hasBaseline = db.prepare(
+      'SELECT id FROM project_cost_sheet_versions WHERE project_id = ? AND is_baseline = 1 LIMIT 1'
+    ).get(projectId);
+    const id = randomUUID();
+    const now = nowISO();
+    db.exec('BEGIN');
+    try {
+      db.prepare(
+        'UPDATE project_cost_sheet_versions SET is_current = 0, status = ? WHERE project_id = ? AND is_current = 1'
+      ).run('superseded', projectId);
+      db.prepare(
+        `INSERT INTO project_cost_sheet_versions (
+          id, project_id, version, status, is_current, is_baseline,
+          total_contract, revenue_without_tax, total_cost, gross_margin, approval_margin,
+          details_json, created_by, created_at, approved_by, approved_at, change_reason
+        ) VALUES (?, ?, ?, 'saved', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '')`
+      ).run(
+        id, projectId, version, hasBaseline ? 0 : 1,
+        number(data.total_contract_with_tax), number(data.total_revenue_without_tax),
+        number(data.total_cost), number(data.gross_margin), number(data.approval_margin),
+        jsonText, userId, now,
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+    return version;
+  }
 
   const userById = (id) => {
     const row = db.prepare(
@@ -826,15 +898,40 @@ export function createApp({
       const now = nowISO();
       db.prepare(
         `INSERT INTO projects (id, name, description, status, category, manager_user_id, client, start_date, end_date,
-          budget_labor, budget_travel, budget_other, revenue, cost_sheet, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          budget_labor, budget_travel, budget_other, revenue, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id, fields.name, fields.description ?? '', fields.status ?? 'presales', fields.category,
         fields.manager_user_id ?? null, fields.client ?? '', fields.start_date ?? null, fields.end_date ?? null,
         fields.budget_labor ?? 0, fields.budget_travel ?? 0, fields.budget_other ?? 0,
-        fields.revenue ?? 0, fields.cost_sheet ?? null, now, now
+        fields.revenue ?? 0, now, now
       );
+      if (fields.cost_sheet) saveCostSheetVersion(id, fields.cost_sheet, user.id);
       sendJson(res, 201, projectWithManager(id));
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/projects\/([^/]+)\/cost-sheet-versions$/);
+    if (match && method === 'GET') {
+      const projectId = match[1];
+      rowById('projects', projectId);
+      requireProjectManager(user, projectId);
+      const versions = db.prepare(
+        `SELECT v.id, v.version, v.status, v.is_current, v.is_baseline,
+                v.total_contract, v.revenue_without_tax, v.total_cost, v.gross_margin, v.approval_margin,
+                v.created_at, v.approved_at, v.change_reason,
+                creator.full_name AS created_by_name, approver.full_name AS approved_by_name
+         FROM project_cost_sheet_versions v
+         LEFT JOIN users creator ON creator.id = v.created_by
+         LEFT JOIN users approver ON approver.id = v.approved_by
+         WHERE v.project_id = ?
+         ORDER BY v.version DESC`
+      ).all(projectId).map((row) => ({
+        ...row,
+        is_current: !!row.is_current,
+        is_baseline: !!row.is_baseline,
+      }));
+      sendJson(res, 200, versions);
       return true;
     }
 
@@ -848,8 +945,13 @@ export function createApp({
       if (user.role === 'manager' && fields.manager_user_id !== undefined && fields.manager_user_id !== user.id) {
         throw new HttpError(403, '项目经理不能将项目转交给其他人');
       }
+      const costSheetJson = fields.cost_sheet;
+      delete fields.cost_sheet;
       fields.updated_at = nowISO();
       updateRow('projects', id, fields);
+      if (costSheetJson !== undefined && costSheetJson !== null) {
+        saveCostSheetVersion(id, costSheetJson, user.id);
+      }
       sendJson(res, 200, projectWithManager(id));
       return true;
     }

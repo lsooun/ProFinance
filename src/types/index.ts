@@ -94,6 +94,24 @@ export interface ManagerOption {
 }
 
 
+export interface CostSheetVersionSummary {
+  id: string;
+  version: number;
+  status: string;
+  is_current: boolean;
+  is_baseline: boolean;
+  total_contract: number;
+  revenue_without_tax: number;
+  total_cost: number;
+  gross_margin: number;
+  approval_margin: number;
+  created_at: string;
+  approved_at: string | null;
+  change_reason: string;
+  created_by_name: string | null;
+  approved_by_name: string | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -110,6 +128,9 @@ export interface Project {
   budget_other: number;
   revenue: number;
   cost_sheet?: CostSheetData | null;
+  cost_sheet_version?: number | null;
+  cost_sheet_updated_at?: string | null;
+  cost_sheet_baseline_version?: number | null;
   aggregate_income?: number;
   aggregate_expense?: number;
   aggregate_hours?: number;

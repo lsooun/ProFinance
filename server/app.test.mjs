@@ -689,6 +689,36 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
   assert.equal(created.status, 201);
   assert.equal(created.data.cost_sheet.total_contract_with_tax, 106);
   assert.equal(created.data.cost_sheet.approval_margin, 27);
+  assert.equal(created.data.cost_sheet_version, 1);
+  assert.equal(created.data.cost_sheet_baseline_version, 1);
+
+  const descriptionOnly = await api(`/api/projects/${created.data.id}`, {
+    method: 'PATCH', cookie: managerCookie, body: { description: '只改描述' },
+  });
+  assert.equal(descriptionOnly.status, 200);
+  assert.equal(descriptionOnly.data.cost_sheet_version, 1);
+  assert.equal(app.db.prepare('SELECT COUNT(*) AS n FROM project_cost_sheet_versions WHERE project_id = ?').get(created.data.id).n, 1);
+
+  const costSheetUpdate = await api(`/api/projects/${created.data.id}`, {
+    method: 'PATCH', cookie: managerCookie,
+    body: { cost_sheet: { ...costSheet, approval_margin: 20, approval_margin_pct: 0.2 } },
+  });
+  assert.equal(costSheetUpdate.status, 200);
+  assert.equal(costSheetUpdate.data.cost_sheet_version, 2);
+  assert.equal(costSheetUpdate.data.cost_sheet_baseline_version, 1);
+  assert.equal(costSheetUpdate.data.cost_sheet.approval_margin, 20);
+  assert.equal(app.db.prepare('SELECT COUNT(*) AS n FROM project_cost_sheet_versions WHERE project_id = ?').get(created.data.id).n, 2);
+
+  const versions = await api(`/api/projects/${created.data.id}/cost-sheet-versions`, { cookie: managerCookie });
+  assert.equal(versions.status, 200);
+  assert.equal(versions.data.length, 2);
+  assert.equal(versions.data[0].version, 2);
+  assert.equal(versions.data[0].is_current, true);
+  assert.equal(versions.data[1].version, 1);
+  assert.equal(versions.data[1].is_baseline, true);
+
+  const employeeVersions = await api(`/api/projects/${created.data.id}/cost-sheet-versions`, { cookie: employeeCookie });
+  assert.equal(employeeVersions.status, 403);
 
   const attachment = await api(`/api/projects/${created.data.id}/attachments`, {
     method: 'POST',
@@ -706,6 +736,7 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
 
   const deleted = await api(`/api/projects/${created.data.id}`, { method: 'DELETE', cookie: managerCookie });
   assert.equal(deleted.status, 200);
+  assert.equal(app.db.prepare('SELECT COUNT(*) AS n FROM project_cost_sheet_versions WHERE project_id = ?').get(created.data.id).n, 0);
 });
 
 test('管理员账号可以不关联人员档案', async () => {
