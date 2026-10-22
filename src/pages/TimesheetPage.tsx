@@ -278,7 +278,7 @@ function TimesheetFormModal({
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Input label="日期" type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-          <Input label="工时数值" type="number" min="0.01" step="0.25" required value={hours} onChange={(e) => setHours(e.target.value)} placeholder="8" />
+          <Input label="工时数值" type="number" min="0.01" step="0.01" required value={hours} onChange={(e) => setHours(e.target.value)} placeholder="8" />
           <Select label="单位" value={unit} onChange={(e) => setUnit(e.target.value as TimeUnit)}>
             {(Object.keys(TIME_UNIT_LABELS) as TimeUnit[]).map((item) => (
               <option key={item} value={item}>{TIME_UNIT_LABELS[item]}</option>
