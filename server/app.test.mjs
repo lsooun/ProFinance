@@ -219,6 +219,7 @@ test('项目经理可以创建项目并查看全部数据，但不能管理用�
       name: '测试项目',
       description: '集成测试创建',
       status: 'in_progress',
+      category: 'custom_development',
       manager_user_id: managerUserId,
       client: '测试客户',
       start_date: '2026-10-01',
@@ -233,6 +234,7 @@ test('项目经理可以创建项目并查看全部数据，但不能管理用�
   assert.equal(created.data.name, '测试项目');
   assert.equal(created.data.manager_user_id, managerUserId);
   assert.equal(created.data.manager_name, '张伟');
+  assert.equal(created.data.category, 'custom_development');
 
   const after = await api('/api/bootstrap', { cookie: managerCookie });
   assert.equal(after.data.projects.length, before.data.projects.length + 1);
@@ -243,6 +245,36 @@ test('项目经理可以创建项目并查看全部数据，但不能管理用�
     cookie: managerCookie,
   });
   assert.equal(deleteResult.status, 200);
+});
+
+test('新建项目必须选择合法分类，分类可以修改', async () => {
+  const missing = await api('/api/projects', {
+    method: 'POST', cookie: managerCookie,
+    body: { name: '缺少分类项目', description: '', status: 'presales' },
+  });
+  assert.equal(missing.status, 400);
+  assert.match(missing.data.error, /分类/);
+
+  const invalid = await api('/api/projects', {
+    method: 'POST', cookie: managerCookie,
+    body: { name: '非法分类项目', description: '', status: 'presales', category: 'invalid_category' },
+  });
+  assert.equal(invalid.status, 400);
+
+  const created = await api('/api/projects', {
+    method: 'POST', cookie: managerCookie,
+    body: { name: '分类测试项目', description: '', status: 'presales', category: 'erp_mixed' },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.category, 'erp_mixed');
+
+  const patched = await api(`/api/projects/${created.data.id}`, {
+    method: 'PATCH', cookie: managerCookie, body: { category: 'integration_implementation' },
+  });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.data.category, 'integration_implementation');
+
+  await api(`/api/projects/${created.data.id}`, { method: 'DELETE', cookie: managerCookie });
 });
 
 test('项目经理只能是角色为 manager 的真实用户', async () => {
@@ -258,6 +290,7 @@ test('项目经理只能是角色为 manager 的真实用户', async () => {
         name: '非法负责人项目',
         description: '',
         status: 'presales',
+        category: 'custom_development',
         manager_user_id: invalidId,
         client: '',
         start_date: null,
@@ -648,7 +681,7 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
     method: 'POST',
     cookie: managerCookie,
     body: {
-      name: 'Cost Sheet 集成测试', description: '', status: 'presales',
+      name: 'Cost Sheet 集成测试', description: '', status: 'presales', category: 'custom_development',
       client: '测试客户', budget_labor: 60, budget_travel: 5, budget_other: 5,
       revenue: 106, cost_sheet: costSheet,
     },

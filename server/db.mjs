@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'presales' CHECK (status IN ('presales', 'in_progress', 'completed', 'cancelled')),
+  category TEXT,
   manager_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   client TEXT NOT NULL DEFAULT '',
   start_date TEXT,
@@ -304,6 +305,10 @@ function migrateDatabase(db) {
   if (!columns.includes('cost_sheet')) {
     db.exec('ALTER TABLE projects ADD COLUMN cost_sheet TEXT');
   }
+  if (!columns.includes('category')) {
+    db.exec('ALTER TABLE projects ADD COLUMN category TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category)');
 
   const attachmentColumns = db.prepare('PRAGMA table_info(attachments)').all().map((column) => column.name);
   if (!attachmentColumns.includes('category')) {

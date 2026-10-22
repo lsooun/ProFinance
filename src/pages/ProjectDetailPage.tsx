@@ -6,6 +6,7 @@ import {
 import { budgetActuals, effectiveInvoiceStatus, invoiceAmount, projectFinancials, projectFinancialsFromAggregates } from '@/lib/finance';
 import {
   STATUS_LABELS, STATUS_COLORS,
+  PROJECT_CATEGORY_LABELS, PROJECT_CATEGORY_COLORS,
   PERSON_ROLE_LABELS,
   INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS,
   ATTACHMENT_CATEGORY_LABELS, ATTACHMENT_CATEGORY_COLORS,
@@ -98,6 +99,9 @@ export default function ProjectDetailPage({
               <div className="flex items-center gap-3 mb-2">
                 <h2 className="text-xl font-bold text-slate-900">{project.name}</h2>
                 <Badge className={STATUS_COLORS[project.status]}>{STATUS_LABELS[project.status]}</Badge>
+                <Badge className={project.category ? PROJECT_CATEGORY_COLORS[project.category] : 'bg-slate-50 text-slate-400 border-slate-200 border-dashed'}>
+                  {project.category ? PROJECT_CATEGORY_LABELS[project.category] : '未分类'}
+                </Badge>
               </div>
               {project.description && <p className="text-sm text-slate-500 max-w-2xl">{project.description}</p>}
               <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-500">
@@ -264,6 +268,9 @@ export default function ProjectDetailPage({
             <div className="flex items-center gap-3 mb-2">
               <h2 className="text-xl font-bold text-slate-900">{project.name}</h2>
               <Badge className={STATUS_COLORS[project.status]}>{STATUS_LABELS[project.status]}</Badge>
+              <Badge className={project.category ? PROJECT_CATEGORY_COLORS[project.category] : 'bg-slate-50 text-slate-400 border-slate-200 border-dashed'}>
+                {project.category ? PROJECT_CATEGORY_LABELS[project.category] : '未分类'}
+              </Badge>
             </div>
             {project.description && <p className="text-sm text-slate-500 max-w-2xl">{project.description}</p>}
             <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-slate-500">

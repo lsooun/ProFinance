@@ -9,6 +9,7 @@ const MAX_JSON_BYTES = 20 * 1024 * 1024;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 
 const PROJECT_STATUSES = ['presales', 'in_progress', 'completed', 'cancelled'];
+const PROJECT_CATEGORIES = ['erp_implementation', 'erp_secondary_development', 'erp_mixed', 'custom_development', 'integration_implementation', 'other'];
 const PERSON_ROLES = ['project_manager', 'consultant', 'developer', 'designer', 'qa', 'other'];
 const USER_ROLES = ['admin', 'manager', 'employee'];
 const TRANSACTION_TYPES = ['income', 'expense'];
@@ -466,6 +467,15 @@ export function createApp({
       if (!PROJECT_STATUSES.includes(body.status)) throw new HttpError(400, '项目状态无效');
       out.status = body.status;
     }
+    if (body.category !== undefined) {
+      if (body.category === null || body.category === '') {
+        out.category = null;
+      } else if (!PROJECT_CATEGORIES.includes(body.category)) {
+        throw new HttpError(400, '项目分类无效');
+      } else {
+        out.category = body.category;
+      }
+    }
     if (has('manager_user_id')) {
       if (body.manager_user_id) {
         const manager = db.prepare('SELECT id, role FROM users WHERE id = ?').get(body.manager_user_id);
@@ -810,16 +820,17 @@ export function createApp({
       requireManager(user);
       const body = await readJson(req);
       const fields = parseProject(body);
+      if (!fields.category) throw new HttpError(400, '请选择项目分类');
       if (user.role === 'manager') fields.manager_user_id = user.id;
       const id = randomUUID();
       const now = nowISO();
       db.prepare(
-        `INSERT INTO projects (id, name, description, status, manager_user_id, client, start_date, end_date,
+        `INSERT INTO projects (id, name, description, status, category, manager_user_id, client, start_date, end_date,
           budget_labor, budget_travel, budget_other, revenue, cost_sheet, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
-        id, fields.name, fields.description ?? '', fields.status ?? 'presales', fields.manager_user_id ?? null,
-        fields.client ?? '', fields.start_date ?? null, fields.end_date ?? null,
+        id, fields.name, fields.description ?? '', fields.status ?? 'presales', fields.category,
+        fields.manager_user_id ?? null, fields.client ?? '', fields.start_date ?? null, fields.end_date ?? null,
         fields.budget_labor ?? 0, fields.budget_travel ?? 0, fields.budget_other ?? 0,
         fields.revenue ?? 0, fields.cost_sheet ?? null, now, now
       );

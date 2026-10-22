@@ -12,7 +12,8 @@ import {
 } from '@/lib/costSheet';
 import {
   STATUS_LABELS, STATUS_COLORS, STATUS_DOT_COLORS,
-  type ManagerOption, type Project, type ProjectStatus,
+  PROJECT_CATEGORY_LABELS, PROJECT_CATEGORY_COLORS,
+  type ManagerOption, type Project, type ProjectCategory, type ProjectStatus,
 } from '@/types';
 import {
   getProjects, createProject, updateProject, deleteProject,
@@ -37,6 +38,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
   const canManage = user?.role === 'admin' || user?.role === 'manager';
   const [search, setSearch] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState<ProjectStatus[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<ProjectCategory | 'unclassified' | ''>('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -52,7 +54,9 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
       project.name.toLowerCase().includes(keyword) ||
       (project.client || '').toLowerCase().includes(keyword);
     const matchesStatus = selectedStatuses.length === 0 || selectedStatuses.includes(project.status);
-    return matchesSearch && matchesStatus;
+    const matchesCategory = !categoryFilter
+      || (categoryFilter === 'unclassified' ? !project.category : project.category === categoryFilter);
+    return matchesSearch && matchesStatus && matchesCategory;
   });
 
   const totalContract = filtered.reduce((sum, project) => sum + project.revenue, 0);
@@ -125,6 +129,19 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
             className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
           />
         </div>
+
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value as ProjectCategory | 'unclassified' | '')}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+          aria-label="项目分类筛选"
+        >
+          <option value="">全部分类</option>
+          {(Object.keys(PROJECT_CATEGORY_LABELS) as ProjectCategory[]).map((item) => (
+            <option key={item} value={item}>{PROJECT_CATEGORY_LABELS[item]}</option>
+          ))}
+          <option value="unclassified">未分类</option>
+        </select>
 
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -213,7 +230,12 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
                       <h3 className="text-base font-semibold text-slate-900 truncate group-hover:text-blue-600 transition-colors">{project.name}</h3>
                       <p className="text-xs text-slate-500 mt-0.5">{project.client || '未填写客户'}</p>
                     </div>
-                    <Badge className={STATUS_COLORS[project.status]}>{STATUS_LABELS[project.status]}</Badge>
+                    <div className="flex flex-wrap items-center justify-end gap-1">
+                      <Badge className={STATUS_COLORS[project.status]}>{STATUS_LABELS[project.status]}</Badge>
+                      <Badge className={project.category ? PROJECT_CATEGORY_COLORS[project.category] : 'bg-slate-50 text-slate-400 border-slate-200 border-dashed'}>
+                        {project.category ? PROJECT_CATEGORY_LABELS[project.category] : '未分类'}
+                      </Badge>
+                    </div>
                   </div>
 
                   {project.description && <p className="text-sm text-slate-500 line-clamp-2 mb-3">{project.description}</p>}
@@ -351,6 +373,7 @@ function ProjectFormModal({
   const [name, setName] = useState(project?.name || '');
   const [description, setDescription] = useState(project?.description || '');
   const [status, setStatus] = useState<ProjectStatus>(project?.status || 'presales');
+  const [category, setCategory] = useState<ProjectCategory | ''>(project?.category || '');
   const [managerId, setManagerId] = useState(
     project?.manager_user_id || (currentUserRole === 'manager' ? currentUserId : ''),
   );
@@ -383,11 +406,13 @@ function ProjectFormModal({
     e.preventDefault();
     setError(null);
     if (!name.trim()) { setError('项目名称不能为空'); return; }
+    if (!project && !category) { setError('请选择项目分类'); return; }
     setSaving(true);
     const payload: Omit<Project, 'id' | 'created_at' | 'updated_at' | 'manager_name'> = {
       name: name.trim(),
       description,
       status,
+      category: category || null,
       manager_user_id: currentUserRole === 'manager' ? currentUserId : managerId || null,
       client,
       start_date: startDate || null,
@@ -435,28 +460,34 @@ function ProjectFormModal({
         </div>
         <Textarea label="项目描述" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="简要描述项目内容…" />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Select label="项目分类" required={!project} value={category} onChange={(e) => setCategory(e.target.value as ProjectCategory | '')}>
+            <option value="">{project ? '未分类' : '请选择项目分类'}</option>
+            {(Object.keys(PROJECT_CATEGORY_LABELS) as ProjectCategory[]).map((item) => (
+              <option key={item} value={item}>{PROJECT_CATEGORY_LABELS[item]}</option>
+            ))}
+          </Select>
           <Select label="项目状态" value={status} onChange={(e) => setStatus(e.target.value as ProjectStatus)}>
             {ALL_STATUSES.map((item) => <option key={item} value={item}>{STATUS_LABELS[item]}</option>)}
           </Select>
-          {currentUserRole === 'manager' ? (
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">项目经理</label>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                {managerOptions.find((manager) => manager.id === currentUserId)?.full_name || '本人'}（仅自己负责的项目可查看明细）
-              </div>
-            </div>
-          ) : (
-            <Select label="项目经理" value={managerId} onChange={(e) => setManagerId(e.target.value)}>
-              <option value="">未指定项目经理</option>
-              {managerOptions.map((manager) => (
-                <option key={manager.id} value={manager.id}>{manager.full_name}</option>
-              ))}
-              {project?.manager_user_id && !managerOptions.some((manager) => manager.id === project.manager_user_id) && (
-                <option value={project.manager_user_id}>{project.manager_name || '当前项目经理'}（不可用）</option>
-              )}
-            </Select>
-          )}
         </div>
+        {currentUserRole === 'manager' ? (
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">项目经理</label>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              {managerOptions.find((manager) => manager.id === currentUserId)?.full_name || '本人'}（仅自己负责的项目可查看明细）
+            </div>
+          </div>
+        ) : (
+          <Select label="项目经理" value={managerId} onChange={(e) => setManagerId(e.target.value)}>
+            <option value="">未指定项目经理</option>
+            {managerOptions.map((manager) => (
+              <option key={manager.id} value={manager.id}>{manager.full_name}</option>
+            ))}
+            {project?.manager_user_id && !managerOptions.some((manager) => manager.id === project.manager_user_id) && (
+              <option value={project.manager_user_id}>{project.manager_name || '当前项目经理'}（不可用）</option>
+            )}
+          </Select>
+        )}
         <p className="text-xs text-slate-400 -mt-2">项目经理仅能管理自己负责的项目；管理员可以指定任意项目经理。</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input label="开始日期" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
