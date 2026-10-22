@@ -77,7 +77,6 @@ CREATE TABLE IF NOT EXISTS projects (
   budget_travel REAL NOT NULL DEFAULT 0,
   budget_other REAL NOT NULL DEFAULT 0,
   revenue REAL NOT NULL DEFAULT 0,
-  cost_sheet TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -326,9 +325,6 @@ function migrateDatabase(db) {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_projects_manager_user ON projects(manager_user_id)');
 
-  if (!columns.includes('cost_sheet')) {
-    db.exec('ALTER TABLE projects ADD COLUMN cost_sheet TEXT');
-  }
   if (!columns.includes('category')) {
     db.exec('ALTER TABLE projects ADD COLUMN category TEXT');
   }
@@ -339,30 +335,33 @@ function migrateDatabase(db) {
   `);
   db.exec('CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category)');
 
-  // 将旧的项目 Cost Sheet JSON 迁移为独立版本表的第 1 版。
-  const legacyCostSheets = db.prepare(
-    "SELECT id, cost_sheet, updated_at FROM projects WHERE cost_sheet IS NOT NULL AND cost_sheet <> ''"
-  ).all();
-  for (const project of legacyCostSheets) {
-    const existingVersion = db.prepare(
-      'SELECT id FROM project_cost_sheet_versions WHERE project_id = ? LIMIT 1'
-    ).get(project.id);
-    if (existingVersion) continue;
-    let data;
-    try { data = JSON.parse(project.cost_sheet); } catch { continue; }
-    const number = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
-    db.prepare(
-      `INSERT INTO project_cost_sheet_versions (
-        id, project_id, version, status, is_current, is_baseline,
-        total_contract, revenue_without_tax, total_cost, gross_margin, approval_margin,
-        details_json, created_by, created_at, approved_by, approved_at, change_reason
-      ) VALUES (?, ?, 1, 'saved', 1, 1, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, '')
-    `).run(
-      randomUUID(), project.id,
-      number(data.total_contract_with_tax), number(data.total_revenue_without_tax),
-      number(data.total_cost), number(data.gross_margin), number(data.approval_margin),
-      project.cost_sheet, project.updated_at || nowISO(),
-    );
+  // 将旧的项目 Cost Sheet JSON 迁移为独立版本表的第 1 版，然后移除旧字段。
+  if (columns.includes('cost_sheet')) {
+    const legacyCostSheets = db.prepare(
+      "SELECT id, cost_sheet, updated_at FROM projects WHERE cost_sheet IS NOT NULL AND cost_sheet <> ''"
+    ).all();
+    for (const project of legacyCostSheets) {
+      const existingVersion = db.prepare(
+        'SELECT id FROM project_cost_sheet_versions WHERE project_id = ? LIMIT 1'
+      ).get(project.id);
+      if (existingVersion) continue;
+      let data;
+      try { data = JSON.parse(project.cost_sheet); } catch { continue; }
+      const number = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+      db.prepare(
+        `INSERT INTO project_cost_sheet_versions (
+          id, project_id, version, status, is_current, is_baseline,
+          total_contract, revenue_without_tax, total_cost, gross_margin, approval_margin,
+          details_json, created_by, created_at, approved_by, approved_at, change_reason
+        ) VALUES (?, ?, 1, 'saved', 1, 1, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, '')
+      `).run(
+        randomUUID(), project.id,
+        number(data.total_contract_with_tax), number(data.total_revenue_without_tax),
+        number(data.total_cost), number(data.gross_margin), number(data.approval_margin),
+        project.cost_sheet, project.updated_at || nowISO(),
+      );
+    }
+    db.exec('ALTER TABLE projects DROP COLUMN cost_sheet');
   }
 
   const attachmentColumns = db.prepare('PRAGMA table_info(attachments)').all().map((column) => column.name);

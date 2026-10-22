@@ -647,6 +647,12 @@ test('项目经理和员工账号必须关联唯一人员档案', async () => {
   await api(`/api/persons/${person.id}`, { method: 'DELETE', cookie: adminCookie });
 });
 
+test('项目表不再保留旧 cost_sheet 字段', () => {
+  const columns = app.db.prepare('PRAGMA table_info(projects)').all().map((column) => column.name);
+  assert.equal(columns.includes('cost_sheet'), false);
+  assert.ok(columns.includes('category'));
+});
+
 test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async () => {
   const costSheet = {
     source_file_name: 'test.xlsx',

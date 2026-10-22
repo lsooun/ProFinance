@@ -80,7 +80,7 @@ Cost Sheet 明细保存在独立的 `project_cost_sheet_versions` 表中，不�
 - 当前版本和基线版本分开标记
 - 项目详情可查看版本历史、合同/成本/毛利/审批利润
 - 删除项目时版本记录级联删除
-- 历史 `projects.cost_sheet` JSON 会自动迁移为 v1
+- 历史 `projects.cost_sheet` JSON 会自动迁移为 v1，随后移除旧字段
 
 ### 演示账号
 
