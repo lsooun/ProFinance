@@ -308,11 +308,8 @@ src/
 - 密码使用 `scrypt` 加盐哈希存储，数据库中不保存明文密码。
 - 会话使用 HttpOnly + SameSite=Lax Cookie，前端无法读取。
 - 所有写操作在服务端做角色校验；员工访问非分配项目、他人工时、财务数据都会被拒绝。
-- 附件限制为 `.xlsx/.xls`、单文件 5 MB，文件保存在磁盘上。
+- 附件支持 `.xlsx/.xls/.doc/.docx/.pdf`，单文件 10 MB，文件保存在磁盘上。
 - 本地 HTTP 环境未启用 `Secure` Cookie；上线请使用 HTTPS 并设置 `PF_SECURE_COOKIE=1`。
 - Docker 镜像以非 root 用户运行，应用端口仅绑定宿主机回环地址，由 Caddy/Nginx 对外提供 HTTPS；建议再加限流、防火墙和定期备份。
 - SQLite 适合单实例部署；如需多副本横向扩容，应迁移到 PostgreSQL 等网络数据库。
 
-## 说明
-
-仓库内的 `.env`、`supabase/` 目录是早期版本遗留的 Supabase 配置和 SQL 迁移，**当前版本未使用**。当前后端为本地 Node + SQLite。

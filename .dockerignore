@@ -1,7 +1,6 @@
 .git
 .gitignore
 .dockerignore
-.bolt
 .idea
 .vscode
 .DS_Store
@@ -20,7 +19,6 @@ playwright-report
 .env
 .env.*
 deploy
-supabase
 docs
 README.md
 docker-compose.yml
