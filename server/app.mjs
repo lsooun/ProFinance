@@ -1033,7 +1033,7 @@ export function createApp({
       );
       if (fields.cost_sheet) saveCostSheetVersion(id, fields.cost_sheet, user.id, costSheetChangeReason);
       const createdProject = projectWithManager(id);
-      writeAudit(req, user, 'project.create', 'project', id, { after: createdProject });
+      writeAudit(req, user, 'project.create', 'project', id, { projectId: id, after: createdProject });
       if (fields.cost_sheet) {
         writeAudit(req, user, 'cost_sheet.version.create', 'project', id, {
           projectId: id,
@@ -1081,11 +1081,14 @@ export function createApp({
       if (!versionRow) throw new HttpError(404, '版本不存在');
       const body = await readJson(req);
       const reason = optionalString(body.change_reason, { max: 500 }) || `恢复自 v${versionNumber}`;
+      const previousVersion = db.prepare(
+        'SELECT version FROM project_cost_sheet_versions WHERE project_id = ? AND is_current = 1'
+      ).get(projectId)?.version ?? null;
       saveCostSheetVersion(projectId, versionRow.details_json, user.id, reason);
       const restored = projectWithManager(projectId);
       writeAudit(req, user, 'cost_sheet.version.restore', 'project', projectId, {
         projectId,
-        before: { version: restored.cost_sheet_version - 1 },
+        before: { version: previousVersion },
         after: { version: restored.cost_sheet_version, restored_from: versionNumber, change_reason: reason },
       });
       sendJson(res, 200, restored);

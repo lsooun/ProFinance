@@ -128,7 +128,7 @@ export default function AuditLogsPage() {
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
-              placeholder="搜索操作人、对象或项目…"
+              placeholder="搜索操作人、对象或 ID…"
               className="h-10 w-full rounded-lg border border-slate-300 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
             />
           </div>
