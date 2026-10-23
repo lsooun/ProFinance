@@ -13,6 +13,7 @@ import UsersPage from '@/pages/UsersPage';
 import PersonnelPage from '@/pages/PersonnelPage';
 import TimesheetPage from '@/pages/TimesheetPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
+import AuditLogsPage from '@/pages/AuditLogsPage';
 import { getResetTokenFromHash, pathFor, useHashRoute } from '@/lib/router';
 
 function AppContent() {
@@ -25,7 +26,7 @@ function AppContent() {
   useEffect(() => {
     if (!profile) return;
     const managerOnly = route.page === 'transactions' || route.page === 'personnel' || route.page === 'reports';
-    const adminOnly = route.page === 'users';
+    const adminOnly = route.page === 'users' || route.page === 'audit';
     if ((managerOnly && !isManagerUp) || (adminOnly && profile.role !== 'admin')) {
       navigate('/dashboard', { replace: true });
     }
@@ -94,6 +95,8 @@ function AppContent() {
     content = <ReportsPage />;
   } else if (route.page === 'users' && user.role === 'admin') {
     content = <UsersPage />;
+  } else if (route.page === 'audit' && user.role === 'admin') {
+    content = <AuditLogsPage />;
   } else {
     content = <DashboardPage onNavigate={(page) => navigate(pathFor(page))} />;
   }

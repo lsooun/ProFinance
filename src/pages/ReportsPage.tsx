@@ -5,15 +5,16 @@ import { formatCurrency, formatCurrencyDetailed, formatHours, formatDate } from 
 import type { Transaction, Project, Person, TimesheetEntry, InvoicePlan, InvoiceStatus } from '@/types';
 import {
   PERSON_ROLE_LABELS, INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS, BUDGET_CATEGORY_LABELS,
+  PROJECT_CATEGORY_LABELS, PROJECT_CATEGORY_COLORS,
 } from '@/types';
-import { effectiveInvoiceStatus, invoiceAmount } from '@/lib/finance';
+import { effectiveInvoiceStatus, invoiceAmount, projectFinancials } from '@/lib/finance';
 import {
   getTransactions, getManageableProjects, getPersons, getTimesheets,
   getProjectPlannedHours, getAllInvoicePlans,
 } from '@/lib/storage';
 import {
   FileBarChart, Download, TrendingUp, TrendingDown, Wallet,
-  ChevronLeft, ChevronRight, Clock, Users, FileText,
+  ChevronLeft, ChevronRight, Clock, Users, FileText, PieChart,
 } from 'lucide-react';
 
 type ReportTab = 'financial' | 'hours' | 'invoices';
@@ -106,6 +107,26 @@ export default function ReportsPage() {
   const projectData = Array.from(projectMap.values()).sort((a, b) => b.net - a.net);
   const maxMonthlyAmount = Math.max(...monthlyData.map((month) => Math.max(month.income, month.expense)), 1);
 
+  const categoryStatsMap = new Map<string, {
+    key: string; count: number; contractRevenue: number; plannedProfit: number;
+    cashIncome: number; cashExpense: number;
+  }>();
+  projects.forEach((project) => {
+    const key = project.category || 'unclassified';
+    const current = categoryStatsMap.get(key) || {
+      key, count: 0, contractRevenue: 0, plannedProfit: 0, cashIncome: 0, cashExpense: 0,
+    };
+    const projectTransactions = transactions.filter((tx) => tx.project_id === project.id);
+    const financials = projectFinancials(project, projectTransactions);
+    current.count += 1;
+    current.contractRevenue += financials.contractRevenue;
+    current.plannedProfit += financials.plannedProfit;
+    current.cashIncome += projectTransactions.filter((tx) => tx.type === 'income').reduce((sum, tx) => sum + tx.amount, 0);
+    current.cashExpense += projectTransactions.filter((tx) => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
+    categoryStatsMap.set(key, current);
+  });
+  const categoryStats = Array.from(categoryStatsMap.values()).sort((a, b) => b.contractRevenue - a.contractRevenue);
+
   const periodTimesheets = timesheets.filter((entry) => inPeriod(entry.date));
   const projectHoursData = projects.map((project) => {
     const planned = getProjectPlannedHours(project.id);
@@ -167,7 +188,7 @@ export default function ReportsPage() {
         ['日期', '类型', '分类', '说明', '金额', '项目', '预算分类'],
         periodTx.map((tx) => [
           tx.transaction_date,
-          tx.type === 'income' ? '收入' : '支出',
+          tx.type === 'income' ? '回款' : '付款',
           tx.category,
           tx.description || '',
           tx.amount,
@@ -204,6 +225,23 @@ export default function ReportsPage() {
         invoice.amount,
         invoice.paid,
         INVOICE_STATUS_LABELS[invoice.status],
+      ]),
+    );
+  }
+
+  function exportCategoryCSV() {
+    if (categoryStats.length === 0) return;
+    downloadCSV(
+      '项目分类汇总.csv',
+      ['项目分类', '项目数', '合同总额', '计划利润', '回款', '付款', '现金净额'],
+      categoryStats.map((row) => [
+        row.key === 'unclassified' ? '未分类' : PROJECT_CATEGORY_LABELS[row.key as keyof typeof PROJECT_CATEGORY_LABELS],
+        row.count,
+        row.contractRevenue,
+        row.plannedProfit,
+        row.cashIncome,
+        row.cashExpense,
+        row.cashIncome - row.cashExpense,
       ]),
     );
   }
@@ -259,15 +297,15 @@ export default function ReportsPage() {
       {tab === 'financial' ? (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Card className="p-5"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-lg bg-emerald-100 flex items-center justify-center"><TrendingUp className="w-5 h-5 text-emerald-600" /></div><div><p className="text-sm text-slate-500">总收入</p><p className="text-xl font-bold text-slate-900">{formatCurrencyDetailed(totalIncome)}</p></div></div></Card>
-            <Card className="p-5"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-lg bg-rose-100 flex items-center justify-center"><TrendingDown className="w-5 h-5 text-rose-600" /></div><div><p className="text-sm text-slate-500">总支出</p><p className="text-xl font-bold text-slate-900">{formatCurrencyDetailed(totalExpense)}</p></div></div></Card>
-            <Card className="p-5"><div className="flex items-center gap-3"><div className={`w-11 h-11 rounded-lg flex items-center justify-center ${netProfit >= 0 ? 'bg-blue-100' : 'bg-rose-100'}`}><Wallet className={`w-5 h-5 ${netProfit >= 0 ? 'text-blue-600' : 'text-rose-600'}`} /></div><div><p className="text-sm text-slate-500">净利润</p><p className={`text-xl font-bold ${netProfit >= 0 ? 'text-slate-900' : 'text-rose-600'}`}>{formatCurrencyDetailed(netProfit)}</p></div></div></Card>
+            <Card className="p-5"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-lg bg-emerald-100 flex items-center justify-center"><TrendingUp className="w-5 h-5 text-emerald-600" /></div><div><p className="text-sm text-slate-500">总回款</p><p className="text-xl font-bold text-slate-900">{formatCurrencyDetailed(totalIncome)}</p></div></div></Card>
+            <Card className="p-5"><div className="flex items-center gap-3"><div className="w-11 h-11 rounded-lg bg-rose-100 flex items-center justify-center"><TrendingDown className="w-5 h-5 text-rose-600" /></div><div><p className="text-sm text-slate-500">总付款</p><p className="text-xl font-bold text-slate-900">{formatCurrencyDetailed(totalExpense)}</p></div></div></Card>
+            <Card className="p-5"><div className="flex items-center gap-3"><div className={`w-11 h-11 rounded-lg flex items-center justify-center ${netProfit >= 0 ? 'bg-blue-100' : 'bg-rose-100'}`}><Wallet className={`w-5 h-5 ${netProfit >= 0 ? 'text-blue-600' : 'text-rose-600'}`} /></div><div><p className="text-sm text-slate-500">现金净额</p><p className={`text-xl font-bold ${netProfit >= 0 ? 'text-slate-900' : 'text-rose-600'}`}>{formatCurrencyDetailed(netProfit)}</p></div></div></Card>
           </div>
 
           {reportType === 'yearly' && (
             <Card className="p-6">
               <h3 className="text-base font-semibold text-slate-900 mb-1">月度收支 — {selectedYear} 年</h3>
-              <p className="text-xs text-slate-500 mb-5">按月份对比收入与支出</p>
+              <p className="text-xs text-slate-500 mb-5">按月份对比回款与付款</p>
               {monthlyData.every((month) => month.count === 0) ? (
                 <div className="py-12 text-center"><FileBarChart className="w-10 h-10 text-slate-300 mx-auto mb-3" /><p className="text-sm text-slate-500">{selectedYear} 年暂无收支数据</p></div>
               ) : (
@@ -276,7 +314,7 @@ export default function ReportsPage() {
                     <div key={month.month} className="flex-1 flex flex-col items-center gap-1 group relative">
                       {month.count > 0 && (
                         <div className="absolute -top-16 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-900 text-white text-xs rounded-lg px-2.5 py-1.5 whitespace-nowrap z-10 pointer-events-none">
-                          <div>收入：{formatCurrency(month.income)}</div><div>支出：{formatCurrency(month.expense)}</div>
+                          <div>回款：{formatCurrency(month.income)}</div><div>付款：{formatCurrency(month.expense)}</div>
                           <div className={month.net >= 0 ? 'text-emerald-400' : 'text-rose-400'}>净额：{formatCurrency(month.net)}</div>
                         </div>
                       )}
@@ -290,8 +328,8 @@ export default function ReportsPage() {
                 </div>
               )}
               <div className="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-slate-100">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-emerald-400" /><span className="text-xs text-slate-600">收入</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-rose-400" /><span className="text-xs text-slate-600">支出</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-emerald-400" /><span className="text-xs text-slate-600">回款</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-sm bg-rose-400" /><span className="text-xs text-slate-600">付款</span></div>
               </div>
             </Card>
           )}
@@ -328,7 +366,7 @@ export default function ReportsPage() {
               {projectData.length === 0 ? <p className="text-sm text-slate-500 py-8 text-center">本期暂无关联项目的收支。</p> : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead><tr className="text-left text-xs text-slate-500 border-b border-slate-100"><th className="pb-2 font-medium">项目</th><th className="pb-2 font-medium text-right">收入</th><th className="pb-2 font-medium text-right">支出</th><th className="pb-2 font-medium text-right">净额</th></tr></thead>
+                    <thead><tr className="text-left text-xs text-slate-500 border-b border-slate-100"><th className="pb-2 font-medium">项目</th><th className="pb-2 font-medium text-right">回款</th><th className="pb-2 font-medium text-right">付款</th><th className="pb-2 font-medium text-right">现金净额</th></tr></thead>
                     <tbody className="divide-y divide-slate-50">
                       {projectData.map((project) => (
                         <tr key={project.projectId} className="hover:bg-slate-50 transition-colors">
@@ -344,6 +382,62 @@ export default function ReportsPage() {
               )}
             </Card>
           </div>
+
+          <Card className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <PieChart className="w-5 h-5 text-slate-400" />
+                  <h3 className="text-base font-semibold text-slate-900">项目分类汇总</h3>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">按项目全量数据统计，不随月份筛选变化。</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={exportCategoryCSV} disabled={categoryStats.length === 0}>
+                <Download className="w-4 h-4" /> 导出分类 CSV
+              </Button>
+            </div>
+            {categoryStats.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-500">暂无项目分类数据。</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-left text-xs text-slate-500">
+                      <th className="pb-2 font-medium">项目分类</th>
+                      <th className="pb-2 font-medium text-right">项目数</th>
+                      <th className="pb-2 font-medium text-right">合同总额</th>
+                      <th className="pb-2 font-medium text-right">计划利润</th>
+                      <th className="pb-2 font-medium text-right">回款</th>
+                      <th className="pb-2 font-medium text-right">付款</th>
+                      <th className="pb-2 font-medium text-right">现金净额</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {categoryStats.map((row) => {
+                      const label = row.key === 'unclassified'
+                        ? '未分类'
+                        : PROJECT_CATEGORY_LABELS[row.key as keyof typeof PROJECT_CATEGORY_LABELS] || row.key;
+                      const color = row.key === 'unclassified'
+                        ? 'bg-slate-100 text-slate-600 border-slate-200'
+                        : PROJECT_CATEGORY_COLORS[row.key as keyof typeof PROJECT_CATEGORY_COLORS] || 'bg-slate-100 text-slate-600 border-slate-200';
+                      const cashNet = row.cashIncome - row.cashExpense;
+                      return (
+                        <tr key={row.key} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-2.5"><Badge className={color}>{label}</Badge></td>
+                          <td className="py-2.5 text-right text-slate-600">{row.count}</td>
+                          <td className="py-2.5 text-right font-medium text-slate-900 whitespace-nowrap">{formatCurrency(row.contractRevenue)}</td>
+                          <td className={`py-2.5 text-right font-medium whitespace-nowrap ${row.plannedProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(row.plannedProfit)}</td>
+                          <td className="py-2.5 text-right text-emerald-600 whitespace-nowrap">{formatCurrency(row.cashIncome)}</td>
+                          <td className="py-2.5 text-right text-rose-600 whitespace-nowrap">{formatCurrency(row.cashExpense)}</td>
+                          <td className={`py-2.5 text-right font-semibold whitespace-nowrap ${cashNet >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(cashNet)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
         </>
       ) : tab === 'hours' ? (
         <>

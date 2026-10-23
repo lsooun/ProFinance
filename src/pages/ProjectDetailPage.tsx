@@ -9,9 +9,9 @@ import {
   PROJECT_CATEGORY_LABELS, PROJECT_CATEGORY_COLORS,
   PERSON_ROLE_LABELS,
   INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS,
-  ATTACHMENT_CATEGORY_LABELS, ATTACHMENT_CATEGORY_COLORS,
+  ATTACHMENT_CATEGORY_LABELS, ATTACHMENT_CATEGORY_COLORS, REQUIRED_ATTACHMENT_CATEGORIES,
   type AttachmentCategory, type Project, type Transaction, type Person, type ProjectAssignment,
-  type TimesheetEntry, type InvoicePlan, type ProjectAttachment, type InvoiceStatus, type CostSheetVersionSummary,
+  type TimesheetEntry, type InvoicePlan, type ProjectAttachment, type InvoiceStatus, type CostSheetVersionSummary, type CostSheetVersionDetail,
 } from '@/types';
 import {
   getProjectById, getTransactionsByProject,
@@ -20,12 +20,15 @@ import {
   getPersons,
   getInvoicePlansByProject, getInvoicePlanTotalPercentage, createInvoicePlan, deleteInvoicePlan, updateInvoicePlan,
   getAttachmentsByProject, createAttachment, deleteAttachment, getAttachmentDownloadUrl, getCostSheetVersions,
+  getCostSheetVersion, restoreCostSheetVersion,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
+import { notify } from '@/lib/notify';
 import {
   ArrowLeft, Calendar, User, Target, TrendingUp, TrendingDown,
   Wallet, Plus, ArrowUpRight, ArrowDownRight, Clock, Users, Trash2, Pencil,
-  FileText, Paperclip, Download, Upload, FileSpreadsheet, DollarSign, ShieldAlert, FileType2, History,
+  FileText, Paperclip, Download, Upload, FileSpreadsheet, DollarSign, ShieldAlert, FileType2, History, Eye, RotateCcw,
+  CheckCircle2, AlertCircle,
 } from 'lucide-react';
 
 export default function ProjectDetailPage({
@@ -58,9 +61,18 @@ export default function ProjectDetailPage({
   const [costSheetVersions, setCostSheetVersions] = useState<CostSheetVersionSummary[]>([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState<CostSheetVersionDetail | null>(null);
+  const [versionDetailLoading, setVersionDetailLoading] = useState(false);
+  const [versionActionError, setVersionActionError] = useState<string | null>(null);
+  const [restoringVersion, setRestoringVersion] = useState(false);
   const visibleAttachments = attachmentFilter === 'all'
     ? attachments
     : attachments.filter((attachment) => attachment.category === attachmentFilter);
+  const documentChecklist = REQUIRED_ATTACHMENT_CATEGORIES.map((category) => ({
+    category,
+    count: attachments.filter((attachment) => attachment.category === category).length,
+  }));
+  const completeDocumentCount = documentChecklist.filter((item) => item.count > 0).length;
 
   function reload() {
     setProject(getProjectById(projectId));
@@ -124,11 +136,12 @@ export default function ProjectDetailPage({
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="合同收入" value={formatCurrency(project.revenue)} icon={<Target className="w-5 h-5" />} color="amber" />
-          <StatCard label="实际收入" value={formatCurrency(summary.actualIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
-          <StatCard label="实际支出" value={formatCurrency(summary.actualExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />
-          <StatCard label="实际利润" value={formatCurrency(summary.actualProfit)} icon={<Wallet className="w-5 h-5" />} color={summary.actualProfit >= 0 ? 'blue' : 'rose'} />
+          <StatCard label="合同收入（含税）" value={formatCurrency(project.revenue)} icon={<Target className="w-5 h-5" />} color="amber" />
+          <StatCard label="回款" value={formatCurrency(summary.actualIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
+          <StatCard label="付款" value={formatCurrency(summary.actualExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />
+          <StatCard label="现金净额" value={formatCurrency(summary.actualProfit)} icon={<Wallet className="w-5 h-5" />} color={summary.actualProfit >= 0 ? 'blue' : 'rose'} />
         </div>
+        <p className="text-xs text-slate-400">经营利润按不含税收入计算；回款/付款为实际现金流水。</p>
         <Card className="p-5">
           <h3 className="text-sm font-semibold text-slate-900 mb-3">项目统计</h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
@@ -210,6 +223,37 @@ export default function ProjectDetailPage({
   function openEditAssignment(assignment: ProjectAssignment) {
     setEditingAssignment(assignment);
     setAssignModalOpen(true);
+  }
+
+  async function openVersionDetail(version: number) {
+    setVersionDetailLoading(true);
+    setVersionActionError(null);
+    try {
+      setSelectedVersion(await getCostSheetVersion(projectId, version));
+    } catch {
+      setVersionActionError('版本详情加载失败，请稍后重试。');
+    } finally {
+      setVersionDetailLoading(false);
+    }
+  }
+
+  async function handleRestoreVersion(version: CostSheetVersionDetail) {
+    if (!window.confirm(`确定将 v${version.version} 恢复为新的当前版本吗？`)) return;
+    setRestoringVersion(true);
+    setVersionActionError(null);
+    try {
+      const restored = await restoreCostSheetVersion(projectId, version.version);
+      if (restored) {
+        setSelectedVersion(null);
+        setVersionModalOpen(false);
+        reload();
+        notify(`已从 v${version.version} 恢复，并生成新版本`, 'success');
+      }
+    } catch {
+      setVersionActionError('恢复版本失败，请稍后重试。');
+    } finally {
+      setRestoringVersion(false);
+    }
   }
 
   async function openCostSheetVersions() {
@@ -302,11 +346,12 @@ export default function ProjectDetailPage({
       {canManage && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="合同收入" value={formatCurrency(project.revenue)} icon={<Target className="w-5 h-5" />} color="amber" />
-            <StatCard label="实际收入" value={formatCurrency(txIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
-            <StatCard label="实际支出" value={formatCurrency(txExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />
-            <StatCard label="实际利润" value={formatCurrency(actualProfit)} icon={<Wallet className="w-5 h-5" />} color={actualProfit >= 0 ? 'blue' : 'rose'} />
+            <StatCard label="合同收入（含税）" value={formatCurrency(project.revenue)} icon={<Target className="w-5 h-5" />} color="amber" />
+            <StatCard label="回款" value={formatCurrency(txIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
+            <StatCard label="付款" value={formatCurrency(txExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />
+            <StatCard label="现金净额" value={formatCurrency(actualProfit)} icon={<Wallet className="w-5 h-5" />} color={actualProfit >= 0 ? 'blue' : 'rose'} />
           </div>
+          <p className="text-xs text-slate-400">经营利润按不含税收入计算；回款/付款为实际现金流水。</p>
 
           <Card className="p-5">
             <h3 className="text-sm font-semibold text-slate-900 mb-4">预算拆分与实际执行</h3>
@@ -328,7 +373,7 @@ export default function ProjectDetailPage({
                 );
               })}
             </div>
-            <p className="mt-3 text-xs text-slate-400">实际支出按收支记录中的“预算分类”归集。</p>
+            <p className="mt-3 text-xs text-slate-400">付款按收支记录中的“预算分类”归集。</p>
           </Card>
 
 
@@ -471,7 +516,7 @@ export default function ProjectDetailPage({
                               {isAuto ? (
                                 <div className="flex flex-col items-start gap-0.5">
                                   <Badge className={INVOICE_STATUS_COLORS[status]}>{INVOICE_STATUS_LABELS[status]}</Badge>
-                                  <span className="text-[10px] text-slate-400">按关联收入自动对账</span>
+                                  <span className="text-[10px] text-slate-400">按关联回款自动对账</span>
                                 </div>
                               ) : (
                                 <select
@@ -550,7 +595,7 @@ export default function ProjectDetailPage({
               <div className="space-y-4">
                 <div>
                   <div className="flex items-end justify-between mb-1">
-                    <span className="text-sm text-slate-500">计划利润（合同收入 − 预算）</span>
+                    <span className="text-sm text-slate-500">计划利润（不含税收入 − 预算）</span>
                     <span className={`text-lg font-bold ${plannedProfit >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>{formatCurrency(plannedProfit)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
@@ -563,11 +608,11 @@ export default function ProjectDetailPage({
                 </div>
                 <div className="pt-3 border-t border-slate-100">
                   <div className="flex items-end justify-between mb-1">
-                    <span className="text-sm text-slate-500">实际利润（实际收入 − 实际支出）</span>
+                    <span className="text-sm text-slate-500">现金净额（回款 − 付款）</span>
                     <span className={`text-lg font-bold ${actualProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(actualProfit)}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
-                    <span>实际利润率</span>
+                    <span>现金净额率</span>
                     <span className={actualMargin >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{actualMargin.toFixed(1)}%</span>
                   </div>
                   <div className="w-full h-2 rounded-full bg-slate-100 overflow-hidden">
@@ -750,6 +795,36 @@ export default function ProjectDetailPage({
               </div>
             </div>
 
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+              <div className="mb-2.5 flex items-center justify-between">
+                <p className="text-xs font-medium text-slate-600">关键文档完整性</p>
+                <span className={`text-xs font-semibold ${completeDocumentCount === documentChecklist.length ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {completeDocumentCount} / {documentChecklist.length} 已齐备
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+                {documentChecklist.map((item) => (
+                  <div
+                    key={item.category}
+                    className={`rounded-md border px-2.5 py-2 ${item.count > 0 ? 'border-emerald-200 bg-emerald-50/70' : 'border-amber-200 bg-amber-50/70'}`}
+                    title={item.count > 0 ? `${item.count} 份文档` : '尚未上传'}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      {item.count > 0
+                        ? <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" />
+                        : <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-amber-600" />}
+                      <span className={`truncate text-xs font-medium ${item.count > 0 ? 'text-emerald-800' : 'text-amber-800'}`}>
+                        {ATTACHMENT_CATEGORY_LABELS[item.category]}
+                      </span>
+                    </div>
+                    <p className={`mt-1 pl-5 text-[10px] ${item.count > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {item.count > 0 ? `已上传 ${item.count} 份` : '缺失'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {uploadError && (
               <div className="mb-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">{uploadError}</div>
             )}
@@ -829,14 +904,14 @@ export default function ProjectDetailPage({
               <div className="flex items-center gap-2.5 rounded-lg bg-emerald-50 px-3 py-2.5">
                 <ArrowUpRight className="w-4 h-4 text-emerald-600" />
                 <div>
-                  <p className="text-xs text-slate-500">收入</p>
+                  <p className="text-xs text-slate-500">回款</p>
                   <p className="text-sm font-semibold text-emerald-700">{formatCurrencyDetailed(txIncome)}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2.5 rounded-lg bg-rose-50 px-3 py-2.5">
                 <ArrowDownRight className="w-4 h-4 text-rose-600" />
                 <div>
-                  <p className="text-xs text-slate-500">支出</p>
+                  <p className="text-xs text-slate-500">付款</p>
                   <p className="text-sm font-semibold text-rose-700">{formatCurrencyDetailed(txExpense)}</p>
                 </div>
               </div>
@@ -853,7 +928,7 @@ export default function ProjectDetailPage({
               <EmptyState
                 icon={<DollarSign className="w-6 h-6" />}
                 title="暂无关联收支"
-                description="为该项目的收入与支出记账，实际利润会自动更新。"
+                description="为该项目的回款与付款记账，现金净额会自动更新。"
                 action={<Button size="sm" onClick={() => onAddTransaction?.(project.id)}><Plus className="w-4 h-4" /> 新增收支</Button>}
               />
             ) : (
@@ -876,7 +951,7 @@ export default function ProjectDetailPage({
                         <td className="py-2.5 text-slate-600">{tx.category}</td>
                         <td className="py-2.5">
                           <Badge className={tx.type === 'income' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}>
-                            {tx.type === 'income' ? '收入' : '支出'}
+                            {tx.type === 'income' ? '回款' : '付款'}
                           </Badge>
                         </td>
                         <td className={`py-2.5 text-right font-semibold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -911,6 +986,7 @@ export default function ProjectDetailPage({
                   <th className="px-3 py-2.5 font-medium">毛利</th>
                   <th className="px-3 py-2.5 font-medium">审批利润</th>
                   <th className="px-3 py-2.5 font-medium">创建信息</th>
+                  <th className="px-3 py-2.5 font-medium text-right">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -923,6 +999,7 @@ export default function ProjectDetailPage({
                         {version.is_baseline && <Badge className="bg-violet-50 text-violet-700 border-violet-200">基线</Badge>}
                         {!version.is_current && !version.is_baseline && <Badge className="bg-slate-100 text-slate-500 border-slate-200">历史</Badge>}
                       </div>
+                      {version.change_reason && <p className="mt-1 max-w-[180px] truncate text-[11px] text-slate-400" title={version.change_reason}>{version.change_reason}</p>}
                     </td>
                     <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{formatCurrency(version.total_contract)}</td>
                     <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">{formatCurrency(version.revenue_without_tax)}</td>
@@ -933,10 +1010,84 @@ export default function ProjectDetailPage({
                       <p>{version.created_by_name || '系统迁移'}</p>
                       <p>{formatDate(version.created_at)}</p>
                     </td>
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      <Button variant="ghost" size="sm" onClick={() => void openVersionDetail(version.version)}>
+                        <Eye className="w-3.5 h-3.5" /> 查看
+                      </Button>
+                      {!version.is_current && (
+                        <Button variant="outline" size="sm" className="ml-1" onClick={() => void openVersionDetail(version.version)}>
+                          <RotateCcw className="w-3.5 h-3.5" /> 恢复
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={!!selectedVersion || versionDetailLoading}
+        onClose={() => { setSelectedVersion(null); setVersionActionError(null); }}
+        title={selectedVersion ? `Cost Sheet 版本 v${selectedVersion.version}` : '版本详情'}
+        size="md"
+      >
+        {versionDetailLoading ? (
+          <div className="py-10 text-center text-sm text-slate-500">正在加载版本详情…</div>
+        ) : selectedVersion && (
+          <div className="space-y-4">
+            {versionActionError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{versionActionError}</div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {selectedVersion.is_current && <Badge className="bg-blue-50 text-blue-700 border-blue-200">当前版本</Badge>}
+              {selectedVersion.is_baseline && <Badge className="bg-violet-50 text-violet-700 border-violet-200">基线版本</Badge>}
+              <span className="text-xs text-slate-500">
+                {selectedVersion.created_by_name || '系统迁移'} · {formatDate(selectedVersion.created_at)}
+              </span>
+            </div>
+            {selectedVersion.change_reason && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                <p className="text-xs text-slate-500">变更说明</p>
+                <p className="mt-1 text-sm text-slate-700">{selectedVersion.change_reason}</p>
+              </div>
+            )}
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-xs text-slate-500">
+                    <th className="px-3 py-2.5 font-medium">指标</th>
+                    <th className="px-3 py-2.5 font-medium text-right">当前版本</th>
+                    <th className="px-3 py-2.5 font-medium text-right">该版本</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {[
+                    ['合同总额', project.cost_sheet?.total_contract_with_tax ?? 0, selectedVersion.total_contract],
+                    ['不含税收入', project.cost_sheet?.total_revenue_without_tax ?? 0, selectedVersion.revenue_without_tax],
+                    ['总成本', project.cost_sheet?.total_cost ?? 0, selectedVersion.total_cost],
+                    ['毛利', project.cost_sheet?.gross_margin ?? 0, selectedVersion.gross_margin],
+                    ['审批利润', project.cost_sheet?.approval_margin ?? 0, selectedVersion.approval_margin],
+                  ].map(([label, current, older]) => (
+                    <tr key={String(label)}>
+                      <td className="px-3 py-2.5 text-slate-600">{label}</td>
+                      <td className="px-3 py-2.5 text-right font-medium text-slate-900">{formatCurrency(Number(current))}</td>
+                      <td className="px-3 py-2.5 text-right font-medium text-slate-900">{formatCurrency(Number(older))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!selectedVersion.is_current && (
+              <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
+                <Button variant="outline" onClick={() => setSelectedVersion(null)}>关闭</Button>
+                <Button onClick={() => void handleRestoreVersion(selectedVersion)} disabled={restoringVersion}>
+                  <RotateCcw className="w-4 h-4" /> {restoringVersion ? '恢复中…' : '恢复为新版本'}
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </Modal>

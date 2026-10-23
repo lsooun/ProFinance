@@ -1,6 +1,11 @@
 import type {
   AttachmentCategory,
+  AuditLogPage,
   BootstrapData,
+  PaginatedProjects,
+  PaginatedTransactions,
+  PaginatedTimesheets,
+  CostSheetVersionDetail,
   CostSheetVersionSummary,
   InvoicePlan,
   ManagerOption,
@@ -201,7 +206,7 @@ export async function createProject(
   return result;
 }
 
-export async function updateProject(id: string, updates: Partial<Project>): Promise<Project | null> {
+export async function updateProject(id: string, updates: Partial<Project> & { cost_sheet_change_reason?: string }): Promise<Project | null> {
   const result = await mutate<Project>(`/api/projects/${encodeURIComponent(id)}`, 'PATCH', updates);
   if (!result) return null;
   const store = data();
@@ -515,6 +520,86 @@ export async function getCostSheetVersions(projectId: string): Promise<CostSheet
   return apiRequest<CostSheetVersionSummary[]>(
     `/api/projects/${encodeURIComponent(projectId)}/cost-sheet-versions`,
   );
+}
+
+export async function getCostSheetVersion(projectId: string, version: number): Promise<CostSheetVersionDetail> {
+  return apiRequest<CostSheetVersionDetail>(
+    `/api/projects/${encodeURIComponent(projectId)}/cost-sheet-versions/${version}`,
+  );
+}
+
+export async function restoreCostSheetVersion(projectId: string, version: number, reason?: string): Promise<Project | null> {
+  const result = await apiRequest<Project>(
+    `/api/projects/${encodeURIComponent(projectId)}/cost-sheet-versions/${version}/restore`,
+    { method: 'POST', body: { change_reason: reason || '' } },
+  );
+  const store = data();
+  const index = store.projects.findIndex((project) => project.id === projectId);
+  if (index !== -1) store.projects[index] = result;
+  return result;
+}
+
+// ===== Paginated lists =====
+
+export async function getProjectsPage(params: {
+  page?: number; pageSize?: number; search?: string; category?: string; statuses?: string[];
+} = {}): Promise<PaginatedProjects> {
+  const query = new URLSearchParams();
+  query.set('page', String(params.page ?? 1));
+  query.set('page_size', String(params.pageSize ?? 12));
+  if (params.search) query.set('search', params.search);
+  if (params.category) query.set('category', params.category);
+  if (params.statuses?.length) query.set('status', params.statuses.join(','));
+  return apiRequest<PaginatedProjects>(`/api/projects?${query.toString()}`);
+}
+
+// ===== Paginated lists =====
+
+export async function getTransactionsPage(params: {
+  page?: number; pageSize?: number; search?: string; type?: string; projectId?: string; category?: string;
+} = {}): Promise<PaginatedTransactions> {
+  const query = new URLSearchParams();
+  query.set('page', String(params.page ?? 1));
+  query.set('page_size', String(params.pageSize ?? 25));
+  if (params.search) query.set('search', params.search);
+  if (params.type) query.set('type', params.type);
+  if (params.projectId) query.set('project_id', params.projectId);
+  if (params.category) query.set('category', params.category);
+  return apiRequest<PaginatedTransactions>(`/api/transactions?${query.toString()}`);
+}
+
+export async function getTimesheetsPage(params: {
+  page?: number; pageSize?: number; search?: string; projectId?: string; personId?: string;
+} = {}): Promise<PaginatedTimesheets> {
+  const query = new URLSearchParams();
+  query.set('page', String(params.page ?? 1));
+  query.set('page_size', String(params.pageSize ?? 25));
+  if (params.search) query.set('search', params.search);
+  if (params.projectId) query.set('project_id', params.projectId);
+  if (params.personId) query.set('person_id', params.personId);
+  return apiRequest<PaginatedTimesheets>(`/api/timesheets?${query.toString()}`);
+}
+
+// ===== Audit logs =====
+
+export async function getAuditLogs(params: {
+  page?: number;
+  pageSize?: number;
+  action?: string;
+  entityType?: string;
+  projectId?: string;
+  actorId?: string;
+  search?: string;
+} = {}): Promise<AuditLogPage> {
+  const search = new URLSearchParams();
+  search.set('page', String(params.page ?? 1));
+  search.set('page_size', String(params.pageSize ?? 50));
+  if (params.action) search.set('action', params.action);
+  if (params.entityType) search.set('entity_type', params.entityType);
+  if (params.projectId) search.set('project_id', params.projectId);
+  if (params.actorId) search.set('actor_id', params.actorId);
+  if (params.search) search.set('search', params.search);
+  return apiRequest<AuditLogPage>(`/api/audit-logs?${search.toString()}`);
 }
 
 // ===== Attachments =====

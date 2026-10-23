@@ -63,6 +63,11 @@ CREATE TABLE IF NOT EXISTS password_resets (
 );
 CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -77,6 +82,7 @@ CREATE TABLE IF NOT EXISTS projects (
   budget_travel REAL NOT NULL DEFAULT 0,
   budget_other REAL NOT NULL DEFAULT 0,
   revenue REAL NOT NULL DEFAULT 0,
+  tax_rate REAL NOT NULL DEFAULT 6,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -105,6 +111,24 @@ CREATE TABLE IF NOT EXISTS project_cost_sheet_versions (
 CREATE INDEX IF NOT EXISTS idx_cost_sheet_versions_project ON project_cost_sheet_versions(project_id, version);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_sheet_versions_current ON project_cost_sheet_versions(project_id) WHERE is_current = 1;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cost_sheet_versions_baseline ON project_cost_sheet_versions(project_id) WHERE is_baseline = 1;
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  actor_name TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT,
+  project_id TEXT,
+  before_json TEXT,
+  after_json TEXT,
+  ip TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_project ON audit_logs(project_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 
 CREATE TABLE IF NOT EXISTS project_assignments (
   id TEXT PRIMARY KEY,
@@ -310,33 +334,58 @@ function seedDatabase(db) {
 }
 
 function migrateDatabase(db) {
-  const columns = db.prepare('PRAGMA table_info(projects)').all().map((column) => column.name);
-  if (!columns.includes('manager_user_id')) {
-    db.exec('ALTER TABLE projects ADD COLUMN manager_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `);
+  const applied = new Set(db.prepare('SELECT id FROM schema_migrations').all().map((row) => row.id));
+  const runMigration = (id, fn) => {
+    if (applied.has(id)) return;
+    db.exec('BEGIN');
+    try {
+      fn();
+      db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)').run(id, nowISO());
+      db.exec('COMMIT');
+      applied.add(id);
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  };
+  const projectColumns = () => db.prepare('PRAGMA table_info(projects)').all().map((column) => column.name);
+
+  runMigration('001_project_manager_user', () => {
+    if (!projectColumns().includes('manager_user_id')) {
+      db.exec('ALTER TABLE projects ADD COLUMN manager_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+      db.exec(`
+        UPDATE projects
+        SET manager_user_id = (
+          SELECT users.id FROM users
+          WHERE users.person_id = projects.manager_id
+          LIMIT 1
+        )
+        WHERE manager_user_id IS NULL
+      `);
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_projects_manager_user ON projects(manager_user_id)');
+  });
+
+  runMigration('002_project_category', () => {
+    if (!projectColumns().includes('category')) {
+      db.exec('ALTER TABLE projects ADD COLUMN category TEXT');
+    }
     db.exec(`
       UPDATE projects
-      SET manager_user_id = (
-        SELECT users.id FROM users
-        WHERE users.person_id = projects.manager_id
-        LIMIT 1
-      )
-      WHERE manager_user_id IS NULL
+      SET category = 'erp_delivery'
+      WHERE category IN ('erp_implementation', 'erp_secondary_development', 'erp_mixed')
     `);
-  }
-  db.exec('CREATE INDEX IF NOT EXISTS idx_projects_manager_user ON projects(manager_user_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category)');
+  });
 
-  if (!columns.includes('category')) {
-    db.exec('ALTER TABLE projects ADD COLUMN category TEXT');
-  }
-  db.exec(`
-    UPDATE projects
-    SET category = 'erp_delivery'
-    WHERE category IN ('erp_implementation', 'erp_secondary_development', 'erp_mixed')
-  `);
-  db.exec('CREATE INDEX IF NOT EXISTS idx_projects_category ON projects(category)');
-
-  // 将旧的项目 Cost Sheet JSON 迁移为独立版本表的第 1 版，然后移除旧字段。
-  if (columns.includes('cost_sheet')) {
+  runMigration('003_cost_sheet_versions', () => {
+    if (!projectColumns().includes('cost_sheet')) return;
     const legacyCostSheets = db.prepare(
       "SELECT id, cost_sheet, updated_at FROM projects WHERE cost_sheet IS NOT NULL AND cost_sheet <> ''"
     ).all();
@@ -362,67 +411,99 @@ function migrateDatabase(db) {
       );
     }
     db.exec('ALTER TABLE projects DROP COLUMN cost_sheet');
-  }
+  });
 
-  const attachmentColumns = db.prepare('PRAGMA table_info(attachments)').all().map((column) => column.name);
-  if (!attachmentColumns.includes('category')) {
-    db.exec("ALTER TABLE attachments ADD COLUMN category TEXT NOT NULL DEFAULT 'other'");
-  }
+  runMigration('004_attachment_category', () => {
+    const attachmentColumns = db.prepare('PRAGMA table_info(attachments)').all().map((column) => column.name);
+    if (!attachmentColumns.includes('category')) {
+      db.exec("ALTER TABLE attachments ADD COLUMN category TEXT NOT NULL DEFAULT 'other'");
+    }
+  });
 
-  // 项目经理/员工账号补齐人员档案，并保证一个人员最多一个登录账号。
-  const missingPersonAccounts = db.prepare(
-    "SELECT id, full_name, email, role FROM users WHERE role <> 'admin' AND person_id IS NULL"
-  ).all();
-  for (const account of missingPersonAccounts) {
-    let person = null;
-    if (account.email) {
-      person = db.prepare(
-        'SELECT p.id FROM persons p WHERE lower(p.email) = lower(?) AND NOT EXISTS (SELECT 1 FROM users u WHERE u.person_id = p.id) LIMIT 1'
-      ).get(account.email);
+  runMigration('005_user_person_links', () => {
+    const missingPersonAccounts = db.prepare(
+      "SELECT id, full_name, email, role FROM users WHERE role <> 'admin' AND person_id IS NULL"
+    ).all();
+    for (const account of missingPersonAccounts) {
+      let person = null;
+      if (account.email) {
+        person = db.prepare(
+          'SELECT p.id FROM persons p WHERE lower(p.email) = lower(?) AND NOT EXISTS (SELECT 1 FROM users u WHERE u.person_id = p.id) LIMIT 1'
+        ).get(account.email);
+      }
+      if (!person && account.full_name) {
+        person = db.prepare(
+          'SELECT p.id FROM persons p WHERE p.name = ? AND NOT EXISTS (SELECT 1 FROM users u WHERE u.person_id = p.id) LIMIT 1'
+        ).get(account.full_name);
+      }
+      let personId = person?.id;
+      if (!personId) {
+        personId = randomUUID();
+        db.prepare(
+          `INSERT INTO persons (id, name, role, email, phone, department, is_active, created_at)
+           VALUES (?, ?, ?, ?, '', '', 1, ?)`
+        ).run(
+          personId, account.full_name || account.email || '未命名人员',
+          account.role === 'manager' ? 'project_manager' : 'other',
+          account.email || '', nowISO(),
+        );
+      }
+      db.prepare('UPDATE users SET person_id = ? WHERE id = ?').run(personId, account.id);
     }
-    if (!person && account.full_name) {
-      person = db.prepare(
-        'SELECT p.id FROM persons p WHERE p.name = ? AND NOT EXISTS (SELECT 1 FROM users u WHERE u.person_id = p.id) LIMIT 1'
-      ).get(account.full_name);
+    const duplicatePersonLink = db.prepare(
+      'SELECT person_id FROM users WHERE person_id IS NOT NULL GROUP BY person_id HAVING COUNT(*) > 1 LIMIT 1'
+    ).get();
+    if (!duplicatePersonLink) {
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_person_unique ON users(person_id) WHERE person_id IS NOT NULL');
     }
-    let personId = person?.id;
-    if (!personId) {
-      personId = randomUUID();
-      db.prepare(
-        `INSERT INTO persons (id, name, role, email, phone, department, is_active, created_at)
-         VALUES (?, ?, ?, ?, '', '', 1, ?)`
-      ).run(
-        personId, account.full_name || account.email || '未命名人员',
-        account.role === 'manager' ? 'project_manager' : 'other',
-        account.email || '', nowISO(),
+  });
+
+  runMigration('006_transaction_links', () => {
+    const transactionColumns = db.prepare('PRAGMA table_info(transactions)').all().map((column) => column.name);
+    if (!transactionColumns.includes('budget_category')) {
+      db.exec('ALTER TABLE transactions ADD COLUMN budget_category TEXT');
+    }
+    if (!transactionColumns.includes('invoice_plan_id')) {
+      db.exec('ALTER TABLE transactions ADD COLUMN invoice_plan_id TEXT');
+    }
+    db.exec(`
+      UPDATE transactions
+      SET budget_category = CASE
+        WHEN category IN ('工资', 'Salary') THEN 'labor'
+        WHEN category IN ('差旅', 'Travel') THEN 'travel'
+        ELSE 'other'
+      END
+      WHERE type = 'expense' AND budget_category IS NULL
+    `);
+  });
+
+  runMigration('007_audit_logs', () => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        actor_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        actor_name TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT,
+        project_id TEXT,
+        before_json TEXT,
+        after_json TEXT,
+        ip TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_project ON audit_logs(project_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs(actor_user_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
+    `);
+  });
+
+  runMigration('008_project_tax_rate', () => {
+    if (!projectColumns().includes('tax_rate')) {
+      db.exec('ALTER TABLE projects ADD COLUMN tax_rate REAL NOT NULL DEFAULT 6');
     }
-    db.prepare('UPDATE users SET person_id = ? WHERE id = ?').run(personId, account.id);
-  }
-
-  const duplicatePersonLink = db.prepare(
-    'SELECT person_id FROM users WHERE person_id IS NOT NULL GROUP BY person_id HAVING COUNT(*) > 1 LIMIT 1'
-  ).get();
-  if (!duplicatePersonLink) {
-    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_person_unique ON users(person_id) WHERE person_id IS NOT NULL');
-  }
-
-  const transactionColumns = db.prepare('PRAGMA table_info(transactions)').all().map((column) => column.name);
-  if (!transactionColumns.includes('budget_category')) {
-    db.exec('ALTER TABLE transactions ADD COLUMN budget_category TEXT');
-  }
-  if (!transactionColumns.includes('invoice_plan_id')) {
-    db.exec('ALTER TABLE transactions ADD COLUMN invoice_plan_id TEXT');
-  }
-  db.exec(`
-    UPDATE transactions
-    SET budget_category = CASE
-      WHEN category IN ('工资', 'Salary') THEN 'labor'
-      WHEN category IN ('差旅', 'Travel') THEN 'travel'
-      ELSE 'other'
-    END
-    WHERE type = 'expense' AND budget_category IS NULL
-  `);
+  });
 }
 
 export function openDatabase(dbPath) {

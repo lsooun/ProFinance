@@ -201,6 +201,27 @@ export function createApp({
     return mapProject(row);
   };
 
+  function writeAudit(req, user, action, entityType, entityId, { projectId = null, before = null, after = null } = {}) {
+    try {
+      const safe = (value) => {
+        if (value === undefined || value === null) return null;
+        const text = JSON.stringify(value);
+        return text.length > 20000 ? `${text.slice(0, 20000)}…` : text;
+      };
+      db.prepare(
+        `INSERT INTO audit_logs (
+          id, actor_user_id, actor_name, action, entity_type, entity_id, project_id,
+          before_json, after_json, ip, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        randomUUID(), user.id, user.full_name, action, entityType, entityId ?? null, projectId,
+        safe(before), safe(after), req?.socket?.remoteAddress || '', nowISO(),
+      );
+    } catch (err) {
+      console.error('[audit]', err);
+    }
+  }
+
   function normalizeCostSheetJson(jsonText) {
     try {
       const parsed = JSON.parse(jsonText);
@@ -213,7 +234,7 @@ export function createApp({
     }
   }
 
-  function saveCostSheetVersion(projectId, jsonText, userId) {
+  function saveCostSheetVersion(projectId, jsonText, userId, changeReason = '') {
     const current = db.prepare(
       'SELECT version, details_json FROM project_cost_sheet_versions WHERE project_id = ? AND is_current = 1'
     ).get(projectId);
@@ -242,12 +263,12 @@ export function createApp({
           id, project_id, version, status, is_current, is_baseline,
           total_contract, revenue_without_tax, total_cost, gross_margin, approval_margin,
           details_json, created_by, created_at, approved_by, approved_at, change_reason
-        ) VALUES (?, ?, ?, 'saved', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, '')`
+        ) VALUES (?, ?, ?, 'saved', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)`
       ).run(
         id, projectId, version, hasBaseline ? 0 : 1,
         number(data.total_contract_with_tax), number(data.total_revenue_without_tax),
         number(data.total_cost), number(data.gross_margin), number(data.approval_margin),
-        jsonText, userId, now,
+        jsonText, userId, now, changeReason,
       );
       db.exec('COMMIT');
     } catch (err) {
@@ -567,6 +588,7 @@ export function createApp({
     if (has('budget_travel')) out.budget_travel = optionalNumber(body.budget_travel, '差旅预算');
     if (has('budget_other')) out.budget_other = optionalNumber(body.budget_other, '其他预算');
     if (has('revenue')) out.revenue = optionalNumber(body.revenue, '合同收入');
+    if (body.tax_rate !== undefined) out.tax_rate = requiredNumber(body.tax_rate, '税率', { min: 0, max: 100 });
     if (body.cost_sheet !== undefined) {
       if (body.cost_sheet === null || body.cost_sheet === '') {
         out.cost_sheet = null;
@@ -738,6 +760,53 @@ export function createApp({
       return true;
     }
 
+    if (pathname === '/api/audit-logs' && method === 'GET') {
+      requireAdmin(user);
+      const urlObj = new URL(req.url, 'http://localhost');
+      const page = Math.max(1, Number.parseInt(urlObj.searchParams.get('page') || '1', 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number.parseInt(urlObj.searchParams.get('page_size') || '50', 10) || 50));
+      const filters = [];
+      const params = [];
+      const action = urlObj.searchParams.get('action');
+      const entityType = urlObj.searchParams.get('entity_type');
+      const projectId = urlObj.searchParams.get('project_id');
+      const actorId = urlObj.searchParams.get('actor_id');
+      const search = (urlObj.searchParams.get('search') || '').trim();
+      if (action) { filters.push('action = ?'); params.push(action); }
+      if (entityType) { filters.push('entity_type = ?'); params.push(entityType); }
+      if (projectId) { filters.push('project_id = ?'); params.push(projectId); }
+      if (actorId) { filters.push('actor_user_id = ?'); params.push(actorId); }
+      if (search) {
+        filters.push('(actor_name LIKE ? OR action LIKE ? OR entity_id LIKE ? OR project_id LIKE ?)');
+        const like = `%${search}%`;
+        params.push(like, like, like, like);
+      }
+      const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+      const total = db.prepare(`SELECT COUNT(*) AS count FROM audit_logs ${where}`).get(...params).count;
+      const rows = db.prepare(
+        `SELECT a.*, p.name AS project_name
+         FROM audit_logs a
+         LEFT JOIN projects p ON p.id = a.project_id
+         ${where.replace(/\baction\b/g, 'a.action').replace(/\bentity_type\b/g, 'a.entity_type').replace(/\bproject_id\b/g, 'a.project_id').replace(/\bactor_user_id\b/g, 'a.actor_user_id').replace(/\bactor_name\b/g, 'a.actor_name').replace(/\bentity_id\b/g, 'a.entity_id')}
+         ORDER BY a.created_at DESC
+         LIMIT ? OFFSET ?`
+      ).all(...params, pageSize, (page - 1) * pageSize);
+      sendJson(res, 200, {
+        items: rows.map((row) => {
+          let before = null;
+          let after = null;
+          try { before = row.before_json ? JSON.parse(row.before_json) : null; } catch { /* ignore */ }
+          try { after = row.after_json ? JSON.parse(row.after_json) : null; } catch { /* ignore */ }
+          const { before_json: _before, after_json: _after, ...rest } = row;
+          return { ...rest, before, after };
+        }),
+        total,
+        page,
+        page_size: pageSize,
+      });
+      return true;
+    }
+
     if (pathname === '/api/users' && method === 'GET') {
       requireAdmin(user);
       const users = db.prepare(
@@ -781,7 +850,9 @@ export function createApp({
       if (person && !person.email) {
         db.prepare('UPDATE persons SET email = ? WHERE id = ? AND (email IS NULL OR email = \'\')').run(email, person.id);
       }
-      sendJson(res, 201, { user: publicUser(userById(id)) });
+      const createdUser = publicUser(userById(id));
+      writeAudit(req, user, 'account.create', 'user', id, { after: createdUser });
+      sendJson(res, 201, { user: createdUser });
       return true;
     }
 
@@ -868,7 +939,9 @@ export function createApp({
       if (fields.password_hash && id !== user.id) {
         db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
       }
-      sendJson(res, 200, { user: publicUser(updated) });
+      const updatedUser = publicUser(updated);
+      writeAudit(req, user, 'account.update', 'user', id, { before: publicUser(target), after: updatedUser });
+      sendJson(res, 200, { user: updatedUser });
       return true;
     }
 
@@ -884,7 +957,58 @@ export function createApp({
         if (otherAdmins === 0) throw new HttpError(400, '系统必须至少保留一个启用的管理员');
       }
       db.prepare('DELETE FROM users WHERE id = ?').run(id);
+      writeAudit(req, user, 'account.delete', 'user', id, { before: publicUser(target) });
       sendJson(res, 200, { ok: true });
+      return true;
+    }
+
+    if (pathname === '/api/projects' && method === 'GET') {
+      const urlObj = new URL(req.url, 'http://localhost');
+      const page = Math.max(1, Number.parseInt(urlObj.searchParams.get('page') || '1', 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number.parseInt(urlObj.searchParams.get('page_size') || '12', 10) || 12));
+      const search = (urlObj.searchParams.get('search') || '').trim();
+      const category = urlObj.searchParams.get('category') || '';
+      const statuses = (urlObj.searchParams.get('status') || '').split(',').filter((status) => PROJECT_STATUSES.includes(status));
+      const filters = ['1 = 1'];
+      const params = [];
+      if (user.role === 'employee') {
+        if (!user.person_id) {
+          sendJson(res, 200, { items: [], total: 0, page, page_size: pageSize, summary: { contract: 0, income: 0, expense: 0, status_counts: {} } });
+          return true;
+        }
+        filters.push('EXISTS (SELECT 1 FROM project_assignments pa WHERE pa.project_id = p.id AND pa.person_id = ?)');
+        params.push(user.person_id);
+      }
+      if (search) {
+        filters.push('(p.name LIKE ? OR p.client LIKE ?)');
+        const like = `%${search}%`;
+        params.push(like, like);
+      }
+      if (category === 'unclassified') filters.push('p.category IS NULL');
+      else if (category) { filters.push('p.category = ?'); params.push(category); }
+      if (statuses.length > 0) {
+        filters.push(`p.status IN (${statuses.map(() => '?').join(', ')})`);
+        params.push(...statuses);
+      }
+      const where = `WHERE ${filters.join(' AND ')}`;
+      const total = db.prepare(`SELECT COUNT(*) AS count FROM projects p ${where}`).get(...params).count;
+      const summary = db.prepare(
+        `SELECT COALESCE(SUM(p.revenue), 0) AS contract,
+                COALESCE(SUM((SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'income')), 0) AS income,
+                COALESCE(SUM((SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense')), 0) AS expense
+         FROM projects p ${where}`
+      ).get(...params);
+      const statusRows = db.prepare(
+        `SELECT p.status, COUNT(*) AS count FROM projects p ${where} GROUP BY p.status`
+      ).all(...params);
+      const statusCounts = Object.fromEntries(statusRows.map((row) => [row.status, row.count]));
+      const items = db.prepare(
+        `${PROJECT_SELECT} ${where} ORDER BY p.created_at DESC LIMIT ? OFFSET ?`
+      ).all(...params, pageSize, (page - 1) * pageSize).map(mapProject);
+      sendJson(res, 200, {
+        items, total, page, page_size: pageSize,
+        summary: { contract: summary.contract, income: summary.income, expense: summary.expense, status_counts: statusCounts },
+      });
       return true;
     }
 
@@ -892,22 +1016,31 @@ export function createApp({
       requireManager(user);
       const body = await readJson(req);
       const fields = parseProject(body);
+      const costSheetChangeReason = optionalString(body.cost_sheet_change_reason, { max: 500 }) || '初始版本';
       if (!fields.category) throw new HttpError(400, '请选择项目分类');
       if (user.role === 'manager') fields.manager_user_id = user.id;
       const id = randomUUID();
       const now = nowISO();
       db.prepare(
         `INSERT INTO projects (id, name, description, status, category, manager_user_id, client, start_date, end_date,
-          budget_labor, budget_travel, budget_other, revenue, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          budget_labor, budget_travel, budget_other, revenue, tax_rate, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id, fields.name, fields.description ?? '', fields.status ?? 'presales', fields.category,
         fields.manager_user_id ?? null, fields.client ?? '', fields.start_date ?? null, fields.end_date ?? null,
         fields.budget_labor ?? 0, fields.budget_travel ?? 0, fields.budget_other ?? 0,
-        fields.revenue ?? 0, now, now
+        fields.revenue ?? 0, fields.tax_rate ?? 6, now, now
       );
-      if (fields.cost_sheet) saveCostSheetVersion(id, fields.cost_sheet, user.id);
-      sendJson(res, 201, projectWithManager(id));
+      if (fields.cost_sheet) saveCostSheetVersion(id, fields.cost_sheet, user.id, costSheetChangeReason);
+      const createdProject = projectWithManager(id);
+      writeAudit(req, user, 'project.create', 'project', id, { after: createdProject });
+      if (fields.cost_sheet) {
+        writeAudit(req, user, 'cost_sheet.version.create', 'project', id, {
+          projectId: id,
+          after: { version: createdProject.cost_sheet_version },
+        });
+      }
+      sendJson(res, 201, createdProject);
       return true;
     }
 
@@ -935,24 +1068,80 @@ export function createApp({
       return true;
     }
 
+    match = pathname.match(/^\/api\/projects\/([^/]+)\/cost-sheet-versions\/(\d+)\/restore$/);
+    if (match && method === 'POST') {
+      requireManager(user);
+      const projectId = match[1];
+      const versionNumber = Number.parseInt(match[2], 10);
+      rowById('projects', projectId);
+      requireProjectManager(user, projectId);
+      const versionRow = db.prepare(
+        'SELECT * FROM project_cost_sheet_versions WHERE project_id = ? AND version = ?'
+      ).get(projectId, versionNumber);
+      if (!versionRow) throw new HttpError(404, '版本不存在');
+      const body = await readJson(req);
+      const reason = optionalString(body.change_reason, { max: 500 }) || `恢复自 v${versionNumber}`;
+      saveCostSheetVersion(projectId, versionRow.details_json, user.id, reason);
+      const restored = projectWithManager(projectId);
+      writeAudit(req, user, 'cost_sheet.version.restore', 'project', projectId, {
+        projectId,
+        before: { version: restored.cost_sheet_version - 1 },
+        after: { version: restored.cost_sheet_version, restored_from: versionNumber, change_reason: reason },
+      });
+      sendJson(res, 200, restored);
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/projects\/([^/]+)\/cost-sheet-versions\/(\d+)$/);
+    if (match && method === 'GET') {
+      const projectId = match[1];
+      const versionNumber = Number.parseInt(match[2], 10);
+      rowById('projects', projectId);
+      requireProjectManager(user, projectId);
+      const version = db.prepare(
+        `SELECT v.*, creator.full_name AS created_by_name, approver.full_name AS approved_by_name
+         FROM project_cost_sheet_versions v
+         LEFT JOIN users creator ON creator.id = v.created_by
+         LEFT JOIN users approver ON approver.id = v.approved_by
+         WHERE v.project_id = ? AND v.version = ?`
+      ).get(projectId, versionNumber);
+      if (!version) throw new HttpError(404, '版本不存在');
+      let details = null;
+      try { details = JSON.parse(version.details_json); } catch { /* ignore invalid snapshot */ }
+      const { details_json: _json, ...summary } = version;
+      sendJson(res, 200, { ...summary, is_current: !!version.is_current, is_baseline: !!version.is_baseline, details });
+      return true;
+    }
+
     match = pathname.match(/^\/api\/projects\/([^/]+)$/);
     if (match && method === 'PATCH') {
       requireManager(user);
       const id = match[1];
       rowById('projects', id);
       requireProjectManager(user, id);
-      const fields = parseProject(await readJson(req), { partial: true });
+      const body = await readJson(req);
+      const fields = parseProject(body, { partial: true });
+      const costSheetChangeReason = optionalString(body.cost_sheet_change_reason, { max: 500 }) || '';
       if (user.role === 'manager' && fields.manager_user_id !== undefined && fields.manager_user_id !== user.id) {
         throw new HttpError(403, '项目经理不能将项目转交给其他人');
       }
       const costSheetJson = fields.cost_sheet;
+      const beforeProject = projectWithManager(id);
       delete fields.cost_sheet;
       fields.updated_at = nowISO();
       updateRow('projects', id, fields);
       if (costSheetJson !== undefined && costSheetJson !== null) {
-        saveCostSheetVersion(id, costSheetJson, user.id);
+        saveCostSheetVersion(id, costSheetJson, user.id, costSheetChangeReason);
       }
-      sendJson(res, 200, projectWithManager(id));
+      const updatedProject = projectWithManager(id);
+      writeAudit(req, user, 'project.update', 'project', id, { projectId: id, before: beforeProject, after: updatedProject });
+      if (updatedProject.cost_sheet_version !== beforeProject.cost_sheet_version) {
+        writeAudit(req, user, 'cost_sheet.version.create', 'project', id, {
+          projectId: id,
+          after: { version: updatedProject.cost_sheet_version, baseline: updatedProject.cost_sheet_baseline_version },
+        });
+      }
+      sendJson(res, 200, updatedProject);
       return true;
     }
     if (match && method === 'DELETE') {
@@ -960,6 +1149,7 @@ export function createApp({
       const id = match[1];
       rowById('projects', id);
       requireProjectManager(user, id);
+      const beforeProject = projectWithManager(id);
       const files = db.prepare('SELECT storage_path FROM attachments WHERE project_id = ?').all(id);
       db.exec('BEGIN');
       try {
@@ -973,7 +1163,54 @@ export function createApp({
       for (const file of files) {
         try { fs.unlinkSync(path.join(uploadDir, file.storage_path)); } catch { /* ignore missing file */ }
       }
+      writeAudit(req, user, 'project.delete', 'project', id, { projectId: id, before: beforeProject });
       sendJson(res, 200, { ok: true });
+      return true;
+    }
+
+    if (pathname === '/api/transactions' && method === 'GET') {
+      requireManager(user);
+      const urlObj = new URL(req.url, 'http://localhost');
+      const page = Math.max(1, Number.parseInt(urlObj.searchParams.get('page') || '1', 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number.parseInt(urlObj.searchParams.get('page_size') || '25', 10) || 25));
+      const search = (urlObj.searchParams.get('search') || '').trim();
+      const type = urlObj.searchParams.get('type') || '';
+      const projectId = urlObj.searchParams.get('project_id') || '';
+      const category = urlObj.searchParams.get('category') || '';
+      const filters = [];
+      const params = [];
+      if (user.role === 'manager') {
+        filters.push('t.project_id IN (SELECT p.id FROM projects p WHERE p.manager_user_id = ?)');
+        params.push(user.id);
+      }
+      if (type === 'income' || type === 'expense') { filters.push('t.type = ?'); params.push(type); }
+      if (projectId) { filters.push('t.project_id = ?'); params.push(projectId); }
+      if (category) { filters.push('t.category = ?'); params.push(category); }
+      if (search) {
+        filters.push('(t.description LIKE ? OR t.category LIKE ?)');
+        const like = `%${search}%`;
+        params.push(like, like);
+      }
+      const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+      const summary = db.prepare(
+        `SELECT COUNT(*) AS count,
+                COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) AS income,
+                COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) AS expense
+         FROM transactions t ${where}`
+      ).get(...params);
+      const items = db.prepare(
+        `SELECT t.* FROM transactions t ${where}
+         ORDER BY t.transaction_date DESC, t.created_at DESC
+         LIMIT ? OFFSET ?`
+      ).all(...params, pageSize, (page - 1) * pageSize);
+      const categories = db.prepare(
+        `SELECT DISTINCT t.category FROM transactions t ${where} ORDER BY t.category`
+      ).all(...params).map((row) => row.category);
+      sendJson(res, 200, {
+        items, total: summary.count, page, page_size: pageSize,
+        summary: { income: summary.income, expense: summary.expense },
+        categories,
+      });
       return true;
     }
 
@@ -1002,7 +1239,11 @@ export function createApp({
         id, fields.project_id ?? null, fields.type, fields.category, fields.description ?? '',
         fields.amount, fields.transaction_date, user.id, fields.budget_category, fields.invoice_plan_id, nowISO()
       );
-      sendJson(res, 201, rowById('transactions', id));
+      const createdTransaction = rowById('transactions', id);
+      writeAudit(req, user, 'transaction.create', 'transaction', id, {
+        projectId: fields.project_id ?? null, after: createdTransaction,
+      });
+      sendJson(res, 201, createdTransaction);
       return true;
     }
 
@@ -1050,7 +1291,11 @@ export function createApp({
       });
       fields.budget_category = normalized.budget_category;
       fields.invoice_plan_id = normalized.invoice_plan_id;
-      sendJson(res, 200, updateRow('transactions', id, fields));
+      const updatedTransaction = updateRow('transactions', id, fields);
+      writeAudit(req, user, 'transaction.update', 'transaction', id, {
+        projectId: updatedTransaction.project_id, before: existing, after: updatedTransaction,
+      });
+      sendJson(res, 200, updatedTransaction);
       return true;
     }
     if (match && method === 'DELETE') {
@@ -1062,6 +1307,9 @@ export function createApp({
         requireProjectManager(user, existing.project_id);
       }
       db.prepare('DELETE FROM transactions WHERE id = ?').run(id);
+      writeAudit(req, user, 'transaction.delete', 'transaction', id, {
+        projectId: existing.project_id, before: existing,
+      });
       sendJson(res, 200, { ok: true });
       return true;
     }
@@ -1077,7 +1325,9 @@ export function createApp({
         id, fields.name, fields.role ?? 'other', fields.email ?? '', fields.phone ?? '',
         fields.department ?? '', fields.is_active ?? 1, nowISO()
       );
-      sendJson(res, 201, mapPerson(rowById('persons', id)));
+      const createdPerson = mapPerson(rowById('persons', id));
+      writeAudit(req, user, 'person.create', 'person', id, { after: createdPerson });
+      sendJson(res, 201, createdPerson);
       return true;
     }
 
@@ -1108,7 +1358,9 @@ export function createApp({
           db.prepare('UPDATE users SET email = ? WHERE id = ?').run(fields.email, linkedAccount.id);
         }
       }
-      sendJson(res, 200, mapPerson(updatedPerson));
+      const auditPerson = mapPerson(updatedPerson);
+      writeAudit(req, user, 'person.update', 'person', id, { before: mapPerson(existingPerson), after: auditPerson });
+      sendJson(res, 200, auditPerson);
       return true;
     }
     if (match && method === 'DELETE') {
@@ -1119,7 +1371,9 @@ export function createApp({
       if (linkedUser) {
         throw new HttpError(400, `该人员已开通登录账号“${linkedUser.full_name}”，请先在账号管理中删除对应账号`);
       }
+      const deletedPerson = mapPerson(rowById('persons', id));
       db.prepare('DELETE FROM persons WHERE id = ?').run(id);
+      writeAudit(req, user, 'person.delete', 'person', id, { before: deletedPerson });
       sendJson(res, 200, { ok: true });
       return true;
     }
@@ -1166,6 +1420,48 @@ export function createApp({
       return true;
     }
 
+    if (pathname === '/api/timesheets' && method === 'GET') {
+      const urlObj = new URL(req.url, 'http://localhost');
+      const page = Math.max(1, Number.parseInt(urlObj.searchParams.get('page') || '1', 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number.parseInt(urlObj.searchParams.get('page_size') || '25', 10) || 25));
+      const search = (urlObj.searchParams.get('search') || '').trim();
+      const projectId = urlObj.searchParams.get('project_id') || '';
+      const personId = urlObj.searchParams.get('person_id') || '';
+      const filters = [];
+      const params = [];
+      if (user.role === 'employee') {
+        if (!user.person_id) throw new HttpError(403, '当前账号未关联人员档案');
+        filters.push('ts.person_id = ?');
+        params.push(user.person_id);
+      } else if (user.role === 'manager') {
+        filters.push('ts.project_id IN (SELECT p.id FROM projects p WHERE p.manager_user_id = ?)');
+        params.push(user.id);
+      }
+      if (projectId) { filters.push('ts.project_id = ?'); params.push(projectId); }
+      if (personId) { filters.push('ts.person_id = ?'); params.push(personId); }
+      if (search) {
+        filters.push('(ts.description LIKE ? OR p.name LIKE ?)');
+        const like = `%${search}%`;
+        params.push(like, like);
+      }
+      const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+      const summary = db.prepare(
+        `SELECT COUNT(*) AS count, COALESCE(SUM(ts.hours), 0) AS hours,
+                COUNT(DISTINCT ts.person_id) AS persons
+         FROM timesheets ts LEFT JOIN persons p ON p.id = ts.person_id ${where}`
+      ).get(...params);
+      const items = db.prepare(
+        `SELECT ts.* FROM timesheets ts LEFT JOIN persons p ON p.id = ts.person_id ${where}
+         ORDER BY ts.date DESC, ts.created_at DESC
+         LIMIT ? OFFSET ?`
+      ).all(...params, pageSize, (page - 1) * pageSize);
+      sendJson(res, 200, {
+        items, total: summary.count, page, page_size: pageSize,
+        summary: { hours: summary.hours, persons: summary.persons },
+      });
+      return true;
+    }
+
     if (pathname === '/api/timesheets' && method === 'POST') {
       const body = await readJson(req);
       const fields = parseTimesheet(body, user);
@@ -1176,7 +1472,11 @@ export function createApp({
         id, fields.project_id, fields.person_id, fields.date, fields.hours,
         fields.description ?? '', nowISO()
       );
-      sendJson(res, 201, rowById('timesheets', id));
+      const createdTimesheet = rowById('timesheets', id);
+      writeAudit(req, user, 'timesheet.create', 'timesheet', id, {
+        projectId: createdTimesheet.project_id, after: createdTimesheet,
+      });
+      sendJson(res, 201, createdTimesheet);
       return true;
     }
 
@@ -1188,7 +1488,11 @@ export function createApp({
         throw new HttpError(403, '只能修改自己的工时记录');
       }
       const fields = parseTimesheet(await readJson(req), user, { partial: true, existing });
-      sendJson(res, 200, updateRow('timesheets', id, fields));
+      const updatedTimesheet = updateRow('timesheets', id, fields);
+      writeAudit(req, user, 'timesheet.update', 'timesheet', id, {
+        projectId: updatedTimesheet.project_id, before: existing, after: updatedTimesheet,
+      });
+      sendJson(res, 200, updatedTimesheet);
       return true;
     }
     if (match && method === 'DELETE') {
@@ -1199,6 +1503,9 @@ export function createApp({
       }
       if (user.role === 'manager') requireProjectManager(user, existing.project_id);
       db.prepare('DELETE FROM timesheets WHERE id = ?').run(id);
+      writeAudit(req, user, 'timesheet.delete', 'timesheet', id, {
+        projectId: existing.project_id, before: existing,
+      });
       sendJson(res, 200, { ok: true });
       return true;
     }
@@ -1224,7 +1531,9 @@ export function createApp({
         id, projectId, requiredDate(body.date, '日期'), requiredString(body.stage, '阶段', { max: 120 }),
         percentage, body.status ?? 'unbilled', nowISO()
       );
-      sendJson(res, 201, rowById('invoice_plans', id));
+      const createdInvoice = rowById('invoice_plans', id);
+      writeAudit(req, user, 'invoice.create', 'invoice', id, { projectId, after: createdInvoice });
+      sendJson(res, 201, createdInvoice);
       return true;
     }
 
@@ -1261,7 +1570,11 @@ export function createApp({
       const existingInvoice = rowById('invoice_plans', id);
       requireProjectManager(user, existingInvoice.project_id);
       db.prepare('UPDATE transactions SET invoice_plan_id = NULL WHERE invoice_plan_id = ?').run(id);
+      const deletedInvoice = rowById('invoice_plans', id);
       db.prepare('DELETE FROM invoice_plans WHERE id = ?').run(id);
+      writeAudit(req, user, 'invoice.delete', 'invoice', id, {
+        projectId: deletedInvoice.project_id, before: deletedInvoice,
+      });
       sendJson(res, 200, { ok: true });
       return true;
     }
@@ -1296,7 +1609,11 @@ export function createApp({
         id, projectId, fileName, optionalString(body.file_type, { max: 200 }) || 'application/octet-stream',
         buffer.length, category, storedName, user.id, nowISO()
       );
-      sendJson(res, 201, mapAttachment(rowById('attachments', id)));
+      const createdAttachment = mapAttachment(rowById('attachments', id));
+      writeAudit(req, user, 'attachment.upload', 'attachment', id, {
+        projectId, after: createdAttachment,
+      });
+      sendJson(res, 201, createdAttachment);
       return true;
     }
 
@@ -1327,6 +1644,9 @@ export function createApp({
       requireProjectManager(user, row.project_id);
       db.prepare('DELETE FROM attachments WHERE id = ?').run(id);
       try { fs.unlinkSync(path.join(uploadDir, row.storage_path)); } catch { /* ignore missing file */ }
+      writeAudit(req, user, 'attachment.delete', 'attachment', id, {
+        projectId: row.project_id, before: mapAttachment(row),
+      });
       sendJson(res, 200, { ok: true });
       return true;
     }

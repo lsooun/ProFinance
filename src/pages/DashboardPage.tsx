@@ -195,9 +195,9 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
         </div>
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="实际收入" value={formatCurrency(totalIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
-        <StatCard label="实际支出" value={formatCurrency(totalExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />
-        <StatCard label="实际利润" value={formatCurrency(totalProfit)} icon={<Wallet className="w-5 h-5" />} color={totalProfit >= 0 ? 'blue' : 'rose'} />
+        <StatCard label="累计回款" value={formatCurrency(totalIncome)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
+        <StatCard label="累计付款" value={formatCurrency(totalExpense)} icon={<TrendingDown className="w-5 h-5" />} color="rose" />
+        <StatCard label="现金净额" value={formatCurrency(totalProfit)} icon={<Wallet className="w-5 h-5" />} color={totalProfit >= 0 ? 'blue' : 'rose'} />
         <StatCard label="预算总额" value={formatCurrency(totalBudget)} icon={<DollarSign className="w-5 h-5" />} color="amber" />
       </div>
 
@@ -211,7 +211,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
             <EmptyState
               icon={<FolderKanban className="w-6 h-6" />}
               title="暂无项目"
-              description="创建第一个项目，开始跟踪预算、收入和实际利润。"
+              description="创建第一个项目，开始跟踪预算、回款和现金净额。"
               action={<Button size="sm" onClick={() => onNavigate('projects')}>前往项目</Button>}
             />
           ) : (
@@ -231,7 +231,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
                       <Badge className={STATUS_COLORS[project.status]}>{STATUS_LABELS[project.status]}</Badge>
                       <div className="text-right">
                         <p className={`text-sm font-semibold ${profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(profit)}</p>
-                        <p className="text-xs text-slate-400">实际利润</p>
+                        <p className="text-xs text-slate-400">现金净额</p>
                       </div>
                     </div>
                   </div>
@@ -275,7 +275,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
               <ArrowUpRight className="w-4 h-4 text-emerald-600" />
             </div>
             <div>
-              <p className="text-xs text-slate-500">本月收入</p>
+              <p className="text-xs text-slate-500">本月回款</p>
               <p className="text-lg font-bold text-slate-900">{formatCurrencyDetailed(monthIncome)}</p>
             </div>
           </div>
@@ -286,7 +286,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
               <ArrowDownRight className="w-4 h-4 text-rose-600" />
             </div>
             <div>
-              <p className="text-xs text-slate-500">本月支出</p>
+              <p className="text-xs text-slate-500">本月付款</p>
               <p className="text-lg font-bold text-slate-900">{formatCurrencyDetailed(monthExpense)}</p>
             </div>
           </div>
@@ -315,7 +315,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
           <EmptyState
             icon={<Calendar className="w-6 h-6" />}
             title="暂无收支记录"
-            description="记录收入与支出，保持财务数据及时准确。"
+            description="记录回款与付款，保持现金流水及时准确。"
             action={<Button size="sm" onClick={() => onNavigate('transactions')}>新增收支</Button>}
           />
         ) : (
@@ -338,7 +338,7 @@ export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageK
                     <td className="py-2.5 text-slate-600">{tx.category}</td>
                     <td className="py-2.5">
                       <Badge className={tx.type === 'income' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}>
-                        {tx.type === 'income' ? '收入' : '支出'}
+                        {tx.type === 'income' ? '回款' : '付款'}
                       </Badge>
                     </td>
                     <td className={`py-2.5 text-right font-semibold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>

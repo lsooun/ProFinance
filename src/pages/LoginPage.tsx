@@ -58,7 +58,7 @@ export default function LoginPage() {
           </p>
           <div className="mt-8 space-y-3">
             {[
-              '管理项目预算、合同收入与实际利润',
+              '管理项目预算、合同收入与现金净额',
               '记录收支，支持 CSV 批量导入',
               '跟踪工时、成员投入与回款计划',
               '多角色访问控制与数据隔离',

@@ -112,6 +112,62 @@ export interface CostSheetVersionSummary {
   approved_by_name: string | null;
 }
 
+export interface PaginatedProjects {
+  items: Project[];
+  total: number;
+  page: number;
+  page_size: number;
+  summary: {
+    contract: number;
+    income: number;
+    expense: number;
+    status_counts: Partial<Record<ProjectStatus, number>>;
+  };
+}
+
+export interface PaginatedTransactions {
+  items: Transaction[];
+  total: number;
+  page: number;
+  page_size: number;
+  summary: { income: number; expense: number };
+  categories: string[];
+}
+
+export interface PaginatedTimesheets {
+  items: TimesheetEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+  summary: { hours: number; persons: number };
+}
+
+export interface AuditLogEntry {
+  id: string;
+  actor_user_id: string | null;
+  actor_name: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  before: unknown;
+  after: unknown;
+  ip: string;
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLogEntry[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CostSheetVersionDetail extends CostSheetVersionSummary {
+  details: CostSheetData | null;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -127,6 +183,7 @@ export interface Project {
   budget_travel: number;
   budget_other: number;
   revenue: number;
+  tax_rate: number;
   cost_sheet?: CostSheetData | null;
   cost_sheet_version?: number | null;
   cost_sheet_updated_at?: string | null;
@@ -240,6 +297,10 @@ export const ATTACHMENT_CATEGORY_LABELS: Record<AttachmentCategory, string> = {
   closure: '项目关闭文档',
   other: '其他文档',
 };
+
+export const REQUIRED_ATTACHMENT_CATEGORIES: AttachmentCategory[] = [
+  'cost_sheet', 'contract', 'sow', 'blueprint', 'test_confirmation', 'go_live', 'closure',
+];
 
 export const ATTACHMENT_CATEGORY_COLORS: Record<AttachmentCategory, string> = {
   cost_sheet: 'bg-blue-50 text-blue-700 border-blue-200',

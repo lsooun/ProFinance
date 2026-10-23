@@ -16,6 +16,7 @@ import {
   Clock,
   KeyRound,
   UserRound,
+  ShieldCheck,
 } from 'lucide-react';
 import { USER_ROLE_LABELS } from '@/types';
 import type { PageKey } from '@/lib/router';
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'personnel', label: '人员管理', icon: UserCog, managerUp: true },
   { key: 'reports', label: '统计报表', icon: FileBarChart, managerUp: true },
   { key: 'users', label: '账号管理', icon: Users, adminOnly: true },
+  { key: 'audit', label: '审计日志', icon: ShieldCheck, adminOnly: true },
 ];
 
 export default function AppLayout({

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import {
   Card, Button, Input, Select, Textarea, Modal, Badge, EmptyState, StatCard,
@@ -9,7 +9,7 @@ import {
   type BudgetCategory, type Transaction, type TransactionType, type Project,
 } from '@/types';
 import {
-  getTransactions, getManageableProjects, createTransaction, updateTransaction, deleteTransaction,
+  getTransactions, getTransactionsPage, getManageableProjects, createTransaction, updateTransaction, deleteTransaction,
   getInvoicePlansByProject,
 } from '@/lib/storage';
 import { suggestedBudgetCategory } from '@/lib/finance';
@@ -22,38 +22,60 @@ import { notify } from '@/lib/notify';
 
 export default function TransactionsPage({ initialProjectId }: { initialProjectId?: string | null }) {
   const { user } = useAuth();
-  const [transactions, setTransactions] = useState<Transaction[]>(getTransactions());
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState({ income: 0, expense: 0 });
   const [projects, setProjects] = useState<Project[]>(user ? getManageableProjects(user) : []);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TransactionType | ''>('');
   const [projectFilter, setProjectFilter] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [modalOpen, setModalOpen] = useState(Boolean(initialProjectId));
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
   const [presetProjectId] = useState<string | null>(initialProjectId || null);
   const [importOpen, setImportOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const pageSize = 25;
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
+    const timer = window.setTimeout(() => {
+      getTransactionsPage({
+        page,
+        pageSize,
+        search: search.trim() || undefined,
+        type: typeFilter || undefined,
+        projectId: projectFilter || undefined,
+        category: categoryFilter || undefined,
+      })
+        .then((result) => {
+          if (!active) return;
+          setTransactions(result.items);
+          setTotal(result.total);
+          setSummary(result.summary);
+        })
+        .catch(() => { if (active) setLoadError('收支记录加载失败，请稍后重试。'); })
+        .finally(() => { if (active) setLoading(false); });
+    }, 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [page, pageSize, search, typeFilter, projectFilter, categoryFilter, refreshKey]);
 
   function reload() {
-    setTransactions(getTransactions());
+    setRefreshKey((key) => key + 1);
     setProjects(user ? getManageableProjects(user) : []);
   }
 
-  const filtered = transactions.filter((tx) => {
-    const keyword = search.toLowerCase();
-    const matchesSearch =
-      (tx.description || '').toLowerCase().includes(keyword) ||
-      tx.category.toLowerCase().includes(keyword);
-    const matchesType = !typeFilter || tx.type === typeFilter;
-    const matchesProject = !projectFilter || tx.project_id === projectFilter;
-    const matchesCategory = !categoryFilter || tx.category === categoryFilter;
-    return matchesSearch && matchesType && matchesProject && matchesCategory;
-  });
-
-  const totalIncome = filtered.filter((tx) => tx.type === 'income').reduce((sum, tx) => sum + tx.amount, 0);
-  const totalExpense = filtered.filter((tx) => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
-  const allCategories = [...new Set(transactions.map((tx) => tx.category))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const totalIncome = summary.income;
+  const totalExpense = summary.expense;
+  const allCategories = [...new Set(getTransactions().map((tx) => tx.category))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   function openNew() {
     setEditingTx(null);
@@ -84,27 +106,27 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <StatCard label="收入" value={formatCurrencyDetailed(totalIncome)} icon={<ArrowUpRight className="w-5 h-5" />} color="emerald" />
-        <StatCard label="支出" value={formatCurrencyDetailed(totalExpense)} icon={<ArrowDownRight className="w-5 h-5" />} color="rose" />
-        <StatCard label="净额" value={formatCurrencyDetailed(totalIncome - totalExpense)} icon={<Wallet className="w-5 h-5" />} color={totalIncome - totalExpense >= 0 ? 'blue' : 'rose'} />
+        <StatCard label="回款" value={formatCurrencyDetailed(totalIncome)} icon={<ArrowUpRight className="w-5 h-5" />} color="emerald" />
+        <StatCard label="付款" value={formatCurrencyDetailed(totalExpense)} icon={<ArrowDownRight className="w-5 h-5" />} color="rose" />
+        <StatCard label="现金净额" value={formatCurrencyDetailed(totalIncome - totalExpense)} icon={<Wallet className="w-5 h-5" />} color={totalIncome - totalExpense >= 0 ? 'blue' : 'rose'} />
       </div>
 
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="relative flex-1 max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input type="text" placeholder="搜索收支…" value={search} onChange={(e) => setSearch(e.target.value)}
+          <input type="text" placeholder="搜索收支…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="h-10 w-full rounded-lg border border-slate-300 pl-10 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none" />
         </div>
-        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value as TransactionType | '')} className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+        <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value as TransactionType | ''); setPage(1); }} className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
           <option value="">全部类型</option>
-          <option value="income">收入</option>
-          <option value="expense">支出</option>
+          <option value="income">回款</option>
+          <option value="expense">付款</option>
         </select>
-        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+        <select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setPage(1); }} className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
           <option value="">全部项目</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
-        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+        <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }} className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
           <option value="">全部分类</option>
           {allCategories.map((category) => <option key={category} value={category}>{category}</option>)}
         </select>
@@ -112,13 +134,17 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
         <Button onClick={openNew} className="lg:ml-auto"><Plus className="w-4 h-4" /> 新增收支</Button>
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <Card className="p-12 text-center text-sm text-slate-500">正在加载收支记录…</Card>
+      ) : loadError ? (
+        <Card className="p-6 text-sm text-rose-700">{loadError}</Card>
+      ) : total === 0 ? (
         <Card className="p-6">
           <EmptyState
             icon={<ArrowLeftRight className="w-6 h-6" />}
-            title={transactions.length === 0 ? '暂无收支记录' : '没有匹配的收支记录'}
-            description={transactions.length === 0 ? '记录第一笔收入或支出，开始跟踪财务状况。' : '请调整筛选条件。'}
-            action={transactions.length === 0 ? <Button onClick={openNew}><Plus className="w-4 h-4" /> 新增收支</Button> : undefined}
+            title={search || typeFilter || projectFilter || categoryFilter ? '没有匹配的收支记录' : '暂无收支记录'}
+            description={search || typeFilter || projectFilter || categoryFilter ? '请调整筛选条件。' : '记录第一笔回款或付款，开始跟踪现金流水。'}
+            action={!search && !typeFilter && !projectFilter && !categoryFilter ? <Button onClick={openNew}><Plus className="w-4 h-4" /> 新增收支</Button> : undefined}
           />
         </Card>
       ) : (
@@ -137,7 +163,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filtered.map((tx) => (
+                {transactions.map((tx) => (
                   <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(tx.transaction_date)}</td>
                     <td className="px-4 py-3 text-slate-900 font-medium max-w-xs truncate">{tx.description || tx.category}</td>
@@ -145,7 +171,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
                     <td className="px-4 py-3 text-slate-600 max-w-xs truncate">{projectName(tx.project_id) || '—'}</td>
                     <td className="px-4 py-3">
                       <Badge className={tx.type === 'income' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200'}>
-                        {tx.type === 'income' ? '收入' : '支出'}
+                        {tx.type === 'income' ? '回款' : '付款'}
                       </Badge>
                     </td>
                     <td className={`px-4 py-3 text-right font-semibold whitespace-nowrap ${tx.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -160,6 +186,13 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
               </tbody>
             </table>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
+            <p className="text-xs text-slate-500">共 {total} 条，第 {page} / {totalPages} 页</p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>下一页</Button>
+            </div>
+          </div>
         </Card>
       )}
 
@@ -171,7 +204,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
           projects={projects}
           userId={user?.id || null}
           presetProjectId={presetProjectId}
-          onSaved={() => { setModalOpen(false); reload(); }}
+          onSaved={() => { setModalOpen(false); setPage(1); reload(); }}
         />
       )}
 
@@ -181,7 +214,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
           onClose={() => setImportOpen(false)}
           projects={projects}
           userId={user?.id || null}
-          onImported={() => { setImportOpen(false); reload(); }}
+          onImported={() => { setImportOpen(false); setPage(1); reload(); }}
         />
       )}
 
@@ -193,7 +226,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
                 <AlertCircle className="w-5 h-5 text-rose-600" />
               </div>
               <p className="text-sm text-slate-700">
-                确定删除这笔<span className="font-semibold">{deleteTarget.type === 'income' ? '收入' : '支出'}</span>记录（
+                确定删除这笔<span className="font-semibold">{deleteTarget.type === 'income' ? '回款' : '付款'}</span>记录（
                 <span className="font-semibold">{formatCurrencyDetailed(deleteTarget.amount)}</span>）吗？此操作不可撤销。
               </p>
             </div>
@@ -272,11 +305,11 @@ function TransactionFormModal({
         <div className="grid grid-cols-2 gap-3">
           <button type="button" onClick={() => { setType('income'); setCategory(''); setInvoicePlanId(''); }}
             className={`flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-all ${type === 'income' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
-            <ArrowUpRight className="w-4 h-4" /> 收入
+            <ArrowUpRight className="w-4 h-4" /> 回款
           </button>
           <button type="button" onClick={() => { setType('expense'); setCategory(''); setBudgetCategory('other'); setInvoicePlanId(''); }}
             className={`flex items-center justify-center gap-2 rounded-lg border-2 px-4 py-3 text-sm font-medium transition-all ${type === 'expense' ? 'border-rose-500 bg-rose-50 text-rose-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
-            <ArrowDownRight className="w-4 h-4" /> 支出
+            <ArrowDownRight className="w-4 h-4" /> 付款
           </button>
         </div>
 
@@ -330,7 +363,7 @@ function TransactionFormModal({
                 <option value={invoicePlanId}>当前关联节点（不可用）</option>
               )}
             </Select>
-            <p className="text-xs text-slate-400">关联后，回款节点会根据该收入自动计算已收金额和状态。</p>
+            <p className="text-xs text-slate-400">关联后，回款节点会根据该笔回款自动计算已收金额和状态。</p>
           </div>
         )}
 
@@ -408,13 +441,13 @@ function TransactionImportModal({
 
       const errors: string[] = [];
       const type: TransactionType =
-        typeStr === '收入' || typeStr === 'income'
+        typeStr === '收入' || typeStr === '回款' || typeStr === 'income'
           ? 'income'
-          : typeStr === '支出' || typeStr === 'expense'
+          : typeStr === '支出' || typeStr === '付款' || typeStr === 'expense'
             ? 'expense'
             : 'expense';
-      if (typeStr !== '收入' && typeStr !== '支出' && typeStr !== 'income' && typeStr !== 'expense') {
-        errors.push('类型必须为“收入”或“支出”');
+      if (!['收入', '回款', 'income', '支出', '付款', 'expense'].includes(typeStr)) {
+        errors.push('类型必须为“回款”或“付款”');
       }
       const amount = parseFloat(amountStr);
       if (!Number.isFinite(amount) || amount <= 0) errors.push('金额必须大于 0');
@@ -437,7 +470,7 @@ function TransactionImportModal({
         }
         budgetCategory = budgetAliases[budgetStr] || suggestedBudgetCategory(category);
       } else if (budgetStr) {
-        errors.push('收入记录不能填写预算分类');
+        errors.push('回款记录不能填写预算分类');
       }
 
       let projectId: string | null = null;
@@ -501,8 +534,8 @@ function TransactionImportModal({
       TEMPLATE_HEADERS,
       'transactions-template.csv',
       [
-        ['收入', sampleDate, INCOME_CATEGORIES[0], '示例收入', '25000', sampleProject, ''],
-        ['支出', sampleDate, EXPENSE_CATEGORIES[0], '示例支出', '15000', sampleProject, '人力'],
+        ['回款', sampleDate, INCOME_CATEGORIES[0], '示例回款', '25000', sampleProject, ''],
+        ['付款', sampleDate, EXPENSE_CATEGORIES[0], '示例付款', '15000', sampleProject, '人力'],
       ],
     );
   }
@@ -532,7 +565,7 @@ function TransactionImportModal({
         <div className="space-y-4">
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-700">
             上传包含以下列的 CSV 文件：<span className="font-semibold">类型、日期、分类、描述、金额、项目、预算分类</span>。
-            类型填写“收入”或“支出”；项目需与现有项目名称一致，留空表示不关联项目。支出记录的预算分类填写“人力”“差旅”或“其他”，留空时按分类自动推断。
+            类型填写“回款”或“付款”；项目需与现有项目名称一致，留空表示不关联项目。付款记录的预算分类填写“人力”“差旅”或“其他”，留空时按分类自动推断。
             <br />
             <span className="text-xs text-blue-600">兼容旧模板的表头：Type、Date、Category、Description、Amount、Project、Budget Category。</span>
           </div>
@@ -582,7 +615,7 @@ function TransactionImportModal({
                     {parsedRows.map((row) => (
                       <tr key={row.rowNumber} className={row.error ? 'bg-rose-50/50' : ''}>
                         <td className="px-3 py-2 text-slate-400">{row.rowNumber}</td>
-                        <td className="px-3 py-2 text-slate-600">{row.type === 'income' ? '收入' : '支出'}</td>
+                        <td className="px-3 py-2 text-slate-600">{row.type === 'income' ? '回款' : '付款'}</td>
                         <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{row.date}</td>
                         <td className="px-3 py-2 text-slate-600">{row.category || '—'}</td>
                         <td className="px-3 py-2 text-slate-600 max-w-[120px] truncate">{row.description || '—'}</td>

@@ -697,6 +697,7 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
   assert.equal(created.data.cost_sheet.approval_margin, 27);
   assert.equal(created.data.cost_sheet_version, 1);
   assert.equal(created.data.cost_sheet_baseline_version, 1);
+  assert.equal(created.data.tax_rate, 6);
 
   const descriptionOnly = await api(`/api/projects/${created.data.id}`, {
     method: 'PATCH', cookie: managerCookie, body: { description: '只改描述' },
@@ -707,7 +708,10 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
 
   const costSheetUpdate = await api(`/api/projects/${created.data.id}`, {
     method: 'PATCH', cookie: managerCookie,
-    body: { cost_sheet: { ...costSheet, approval_margin: 20, approval_margin_pct: 0.2 } },
+    body: {
+      cost_sheet: { ...costSheet, approval_margin: 20, approval_margin_pct: 0.2 },
+      cost_sheet_change_reason: '调整审批利润',
+    },
   });
   assert.equal(costSheetUpdate.status, 200);
   assert.equal(costSheetUpdate.data.cost_sheet_version, 2);
@@ -722,6 +726,22 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
   assert.equal(versions.data[0].is_current, true);
   assert.equal(versions.data[1].version, 1);
   assert.equal(versions.data[1].is_baseline, true);
+  assert.equal(versions.data[0].change_reason, '调整审批利润');
+  assert.equal(versions.data[1].change_reason, '初始版本');
+
+  const versionDetail = await api(`/api/projects/${created.data.id}/cost-sheet-versions/1`, { cookie: managerCookie });
+  assert.equal(versionDetail.status, 200);
+  assert.equal(versionDetail.data.details.approval_margin, 27);
+
+  const restored = await api(`/api/projects/${created.data.id}/cost-sheet-versions/1/restore`, {
+    method: 'POST', cookie: managerCookie, body: { change_reason: '回到初始方案' },
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.data.cost_sheet_version, 3);
+  assert.equal(restored.data.cost_sheet.approval_margin, 27);
+  const restoredVersions = await api(`/api/projects/${created.data.id}/cost-sheet-versions`, { cookie: managerCookie });
+  assert.equal(restoredVersions.data.length, 3);
+  assert.equal(restoredVersions.data[0].change_reason, '回到初始方案');
 
   const employeeVersions = await api(`/api/projects/${created.data.id}/cost-sheet-versions`, { cookie: employeeCookie });
   assert.equal(employeeVersions.status, 403);
@@ -931,4 +951,61 @@ test('回款比例合计不能超过 100%', async () => {
   });
   assert.equal(result.status, 400);
   assert.match(result.data.error, /100%/);
+});
+
+test('迁移记录已版本化', () => {
+  const rows = app.db.prepare('SELECT id FROM schema_migrations ORDER BY id').all();
+  assert.ok(rows.some((row) => row.id === '001_project_manager_user'));
+  assert.ok(rows.some((row) => row.id === '008_project_tax_rate'));
+});
+
+test('审计日志可查询且仅管理员可访问', async () => {
+  const result = await api('/api/audit-logs?page=1&page_size=2', { cookie: adminCookie });
+  assert.equal(result.status, 200);
+  assert.ok(result.data.total > 0);
+  assert.ok(result.data.items.length <= 2);
+  assert.ok(result.data.items[0].action);
+  assert.ok(result.data.items[0].actor_name);
+
+  const denied = await api('/api/audit-logs', { cookie: managerCookie });
+  assert.equal(denied.status, 403);
+});
+
+test('收支和工时列表支持服务端分页', async () => {
+  const transactions = await api('/api/transactions?page=1&page_size=1', { cookie: managerCookie });
+  assert.equal(transactions.status, 200);
+  assert.ok(transactions.data.total >= 1);
+  assert.ok(transactions.data.items.length <= 1);
+  assert.ok(transactions.data.summary.income >= 0);
+
+  const timesheets = await api('/api/timesheets?page=1&page_size=1', { cookie: managerCookie });
+  assert.equal(timesheets.status, 200);
+  assert.ok(timesheets.data.total >= 1);
+  assert.ok(timesheets.data.items.length <= 1);
+  assert.ok(timesheets.data.summary.hours >= 0);
+
+  const employeeTransactions = await api('/api/transactions?page=1', { cookie: employeeCookie });
+  assert.equal(employeeTransactions.status, 403);
+  const employeeBootstrap = await api('/api/bootstrap', { cookie: employeeCookie });
+  const employeePersonId = employeeBootstrap.data.user.person_id;
+  const employeeTimesheets = await api('/api/timesheets?page=1&page_size=100', { cookie: employeeCookie });
+  assert.equal(employeeTimesheets.status, 200);
+  assert.ok(employeeTimesheets.data.items.every((entry) => entry.person_id === employeePersonId));
+});
+
+test('项目列表支持服务端分页和筛选', async () => {
+  const page = await api('/api/projects?page=1&page_size=2', { cookie: managerCookie });
+  assert.equal(page.status, 200);
+  assert.ok(page.data.total >= 1);
+  assert.ok(page.data.items.length <= 2);
+  assert.ok(page.data.summary.contract >= 0);
+  assert.ok(page.data.summary.income >= 0);
+
+  const filtered = await api('/api/projects?category=erp_delivery&page_size=100', { cookie: adminCookie });
+  assert.equal(filtered.status, 200);
+  assert.ok(filtered.data.items.every((project) => project.category === 'erp_delivery'));
+
+  const employee = await api('/api/projects?page_size=100', { cookie: employeeCookie });
+  assert.equal(employee.status, 200);
+  assert.ok(employee.data.items.every((project) => project.id));
 });

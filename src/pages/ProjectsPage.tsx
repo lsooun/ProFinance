@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Card, Button, Input, Select, Textarea, Modal, Badge, EmptyState, StatCard,
 } from '@/components/ui';
 import {
   formatCurrency, formatHours, formatDate,
 } from '@/lib/format';
-import { projectFinancials, projectFinancialsFromAggregates } from '@/lib/finance';
+import { projectFinancialsFromAggregates } from '@/lib/finance';
 import {
   calculateCostSheet, costSheetInputsFromData, costSheetToProjectFields,
   type CostSheetInputs,
@@ -16,9 +16,9 @@ import {
   type ManagerOption, type Project, type ProjectCategory, type ProjectStatus,
 } from '@/types';
 import {
-  getProjects, createProject, updateProject, deleteProject,
+  getProjectsPage, createProject, updateProject, deleteProject,
   getProjectActualHours, getProjectPlannedHours,
-  getManagerOptions, getAccessibleProjects, getTransactionsByProject,
+  getManagerOptions, getTimesheets,
   getAssignmentsByProject, getTimesheetsByProject,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
@@ -31,51 +31,67 @@ const ALL_STATUSES: ProjectStatus[] = ['presales', 'in_progress', 'completed', '
 
 export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: string) => void }) {
   const { user } = useAuth();
-  const [projects, setProjects] = useState<Project[]>(
-    user ? getAccessibleProjects(user) : getProjects(),
-  );
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<{
+    contract: number; income: number; expense: number;
+    status_counts: Partial<Record<ProjectStatus, number>>;
+  }>({ contract: 0, income: 0, expense: 0, status_counts: {} });
   const managerOptions = getManagerOptions();
   const canManage = user?.role === 'admin' || user?.role === 'manager';
   const [search, setSearch] = useState('');
   const [selectedStatuses, setSelectedStatuses] = useState<ProjectStatus[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<ProjectCategory | 'unclassified' | ''>('');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const pageSize = 12;
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
+    const timer = window.setTimeout(() => {
+      getProjectsPage({
+        page,
+        pageSize,
+        search: search.trim() || undefined,
+        category: categoryFilter || undefined,
+        statuses: selectedStatuses.length ? selectedStatuses : undefined,
+      })
+        .then((result) => {
+          if (!active) return;
+          setProjects(result.items);
+          setTotal(result.total);
+          setSummary(result.summary);
+        })
+        .catch(() => { if (active) setLoadError('项目加载失败，请稍后重试。'); })
+        .finally(() => { if (active) setLoading(false); });
+    }, 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [page, pageSize, search, categoryFilter, selectedStatuses, refreshKey]);
 
   function reload() {
-    setProjects(user ? getAccessibleProjects(user) : getProjects());
+    setRefreshKey((key) => key + 1);
   }
 
-  const filtered = projects.filter((project) => {
-    const keyword = search.toLowerCase();
-    const matchesSearch =
-      project.name.toLowerCase().includes(keyword) ||
-      (project.client || '').toLowerCase().includes(keyword);
-    const matchesStatus = selectedStatuses.length === 0 || selectedStatuses.includes(project.status);
-    const matchesCategory = !categoryFilter
-      || (categoryFilter === 'unclassified' ? !project.category : project.category === categoryFilter);
-    return matchesSearch && matchesStatus && matchesCategory;
-  });
-
-  const totalContract = filtered.reduce((sum, project) => sum + project.revenue, 0);
-  const financialsFor = (project: Project) => user?.role === 'manager'
-    ? projectFinancialsFromAggregates(project)
-    : projectFinancials(project, getTransactionsByProject(project.id));
-  const totalActualIncome = filtered.reduce((sum, project) => sum + financialsFor(project).actualIncome, 0);
-  const totalActualProfit = filtered.reduce((sum, project) => sum + financialsFor(project).actualProfit, 0);
-  const myActiveProjects = filtered.filter((project) => project.status === 'in_progress').length;
-  const myTotalHours = filtered.reduce(
-    (sum, project) =>
-      sum +
-      getTimesheetsByProject(project.id)
-        .filter((entry) => entry.person_id === user?.person_id)
-        .reduce((hours, entry) => hours + entry.hours, 0),
-    0,
-  );
+  const totalContract = summary.contract;
+  const financialsFor = (project: Project) => projectFinancialsFromAggregates(project);
+  const totalActualIncome = summary.income;
+  const totalActualProfit = summary.income - summary.expense;
+  const myActiveProjects = summary.status_counts.in_progress ?? 0;
+  const myTotalHours = getTimesheets()
+    .filter((entry) => entry.person_id === user?.person_id)
+    .reduce((sum, entry) => sum + entry.hours, 0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   function toggleStatus(status: ProjectStatus) {
+    setPage(1);
     setSelectedStatuses((prev) =>
       prev.includes(status) ? prev.filter((item) => item !== status) : [...prev, status],
     );
@@ -98,6 +114,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
     setDeleting(false);
     if (ok) {
       setDeleteTarget(null);
+      setPage(1);
       reload();
     }
   }
@@ -107,12 +124,12 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
       {canManage ? (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <StatCard label="合同总额" value={formatCurrency(totalContract)} icon={<TrendingUp className="w-5 h-5" />} color="emerald" />
-          <StatCard label="实际收入" value={formatCurrency(totalActualIncome)} icon={<DollarSign className="w-5 h-5" />} color="blue" />
-          <StatCard label="实际利润" value={formatCurrency(totalActualProfit)} icon={<DollarSign className="w-5 h-5" />} color={totalActualProfit >= 0 ? 'blue' : 'rose'} />
+          <StatCard label="累计回款" value={formatCurrency(totalActualIncome)} icon={<DollarSign className="w-5 h-5" />} color="blue" />
+          <StatCard label="现金净额" value={formatCurrency(totalActualProfit)} icon={<DollarSign className="w-5 h-5" />} color={totalActualProfit >= 0 ? 'blue' : 'rose'} />
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <StatCard label="我的项目" value={String(filtered.length)} icon={<Briefcase className="w-5 h-5" />} color="blue" />
+          <StatCard label="我的项目" value={String(total)} icon={<Briefcase className="w-5 h-5" />} color="blue" />
           <StatCard label="进行中的项目" value={String(myActiveProjects)} icon={<Clock className="w-5 h-5" />} color="emerald" />
           <StatCard label="我的累计工时" value={formatHours(myTotalHours)} icon={<Clock className="w-5 h-5" />} color="amber" />
         </div>
@@ -125,14 +142,14 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
             type="text"
             placeholder="按项目名称或客户搜索…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="h-10 w-full rounded-lg border border-slate-300 pl-10 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
           />
         </div>
 
         <select
           value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value as ProjectCategory | 'unclassified' | '')}
+          onChange={(e) => { setCategoryFilter(e.target.value as ProjectCategory | 'unclassified' | ''); setPage(1); }}
           className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
           aria-label="项目分类筛选"
         >
@@ -178,32 +195,37 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
         )}
       </div>
 
-      {filtered.length === 0 ? (
+            {loading ? (
+        <Card className="p-12 text-center text-sm text-slate-500">正在加载项目…</Card>
+      ) : loadError ? (
+        <Card className="p-6 text-sm text-rose-700">{loadError}</Card>
+      ) : total === 0 ? (
         <Card className="p-6">
           <EmptyState
             icon={<FolderKanban className="w-6 h-6" />}
             title={
-              projects.length === 0
+              total === 0 && !search && !categoryFilter && selectedStatuses.length === 0
                 ? canManage ? '暂无项目' : '暂无可访问项目'
                 : '没有匹配的项目'
             }
             description={
-              projects.length === 0
+              total === 0 && !search && !categoryFilter && selectedStatuses.length === 0
                 ? canManage
-                  ? '创建第一个项目，开始跟踪预算、收入和实际利润。'
+                  ? '创建第一个项目，开始跟踪预算、回款和现金净额。'
                   : '你还没有被分配到任何项目，请联系项目经理。'
                 : '请调整搜索条件或状态筛选。'
             }
             action={
-              projects.length === 0 && canManage
+              total === 0 && !search && !categoryFilter && selectedStatuses.length === 0 && canManage
                 ? <Button onClick={openNew}><Plus className="w-4 h-4" />新建项目</Button>
                 : undefined
             }
           />
         </Card>
       ) : (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map((project) => {
+          {projects.map((project) => {
             const financials = financialsFor(project);
             const plannedProfit = financials.plannedProfit;
             const plannedMargin = financials.plannedMargin;
@@ -243,7 +265,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
                   {canManage ? (
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-500">合同收入</span>
+                        <span className="text-slate-500">合同收入（含税）</span>
                         <span className="font-medium text-slate-900">{formatCurrency(project.revenue)}</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
@@ -251,22 +273,22 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
                         <span className="font-medium text-slate-900">{formatCurrency(financials.budget)}</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-500">实际收入</span>
+                        <span className="text-slate-500">回款</span>
                         <span className="font-medium text-emerald-600">{formatCurrency(financials.actualIncome)}</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-500">实际支出</span>
+                        <span className="text-slate-500">付款</span>
                         <span className="font-medium text-rose-600">{formatCurrency(financials.actualExpense)}</span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-slate-500">计划利润</span>
+                        <span className="text-slate-500">计划利润（不含税）</span>
                         <div className="text-right">
                           <span className={`font-semibold ${plannedProfit >= 0 ? 'text-blue-600' : 'text-rose-600'}`}>{formatCurrency(plannedProfit)}</span>
                           <span className="text-xs text-slate-400 ml-1.5">({plannedMargin.toFixed(1)}%)</span>
                         </div>
                       </div>
                       <div className="flex items-center justify-between text-sm pt-2 border-t border-slate-100">
-                        <span className="text-slate-500">实际利润</span>
+                        <span className="text-slate-500">现金净额</span>
                         <div className="text-right">
                           <span className={`font-semibold ${financials.actualProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(financials.actualProfit)}</span>
                           <span className="text-xs text-slate-400 ml-1.5">({financials.actualMargin.toFixed(1)}%)</span>
@@ -322,6 +344,14 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
             );
           })}
         </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <p className="text-xs text-slate-500">共 {total} 个项目，第 {page} / {totalPages} 页</p>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>下一页</Button>
+          </div>
+        </div>
+        </>
       )}
 
       {modalOpen && (
@@ -332,7 +362,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
           managerOptions={managerOptions}
           currentUserId={user?.id || ''}
           currentUserRole={user?.role || 'employee'}
-          onSaved={() => { setModalOpen(false); reload(); }}
+          onSaved={() => { setModalOpen(false); setPage(1); reload(); }}
         />
       )}
 
@@ -384,6 +414,8 @@ function ProjectFormModal({
   const [budgetTravel, setBudgetTravel] = useState(project?.budget_travel?.toString() || '0');
   const [budgetOther, setBudgetOther] = useState(project?.budget_other?.toString() || '0');
   const [revenue, setRevenue] = useState(project?.revenue?.toString() || '0');
+  const [taxRate, setTaxRate] = useState(project?.tax_rate?.toString() || '6');
+  const [costSheetChangeReason, setCostSheetChangeReason] = useState('');
   const costSheetMode = !project || Boolean(project.cost_sheet);
   const [costInputs, setCostInputs] = useState<CostSheetInputs>(() => costSheetInputsFromData(project?.cost_sheet));
   const [error, setError] = useState<string | null>(null);
@@ -408,7 +440,7 @@ function ProjectFormModal({
     if (!name.trim()) { setError('项目名称不能为空'); return; }
     if (!project && !category) { setError('请选择项目分类'); return; }
     setSaving(true);
-    const payload: Omit<Project, 'id' | 'created_at' | 'updated_at' | 'manager_name'> = {
+    const payload: Omit<Project, 'id' | 'created_at' | 'updated_at' | 'manager_name'> & { cost_sheet_change_reason?: string } = {
       name: name.trim(),
       description,
       status,
@@ -421,7 +453,9 @@ function ProjectFormModal({
       budget_travel: costSheetMode ? derived.budget_travel : parseFloat(budgetTravel) || 0,
       budget_other: costSheetMode ? derived.budget_other : parseFloat(budgetOther) || 0,
       revenue: costSheetMode ? derived.revenue : parseFloat(revenue) || 0,
+      tax_rate: costSheetMode ? 6 : parseFloat(taxRate) || 0,
       cost_sheet: costSheetMode ? computedCostSheet : null,
+      cost_sheet_change_reason: costSheetMode && project ? costSheetChangeReason.trim() : undefined,
     };
     const saved = project ? await updateProject(project.id, payload) : await createProject(payload);
     setSaving(false);
@@ -497,6 +531,15 @@ function ProjectFormModal({
         {costSheetMode ? (
           <>
             <div className="space-y-5">
+              {project && (
+                <Input
+                  label="本次 Cost Sheet 变更说明（可选）"
+                  value={costSheetChangeReason}
+                  onChange={(e) => setCostSheetChangeReason(e.target.value)}
+                  placeholder="例如：调整外包成本、补充合同金额"
+                  maxLength={500}
+                />
+              )}
               <section className="space-y-3">
                 <h4 className="text-sm font-semibold text-slate-900 border-b border-slate-200 pb-2">合同与收入</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -612,7 +655,10 @@ function ProjectFormModal({
                 <span className="font-bold text-slate-900">{formatCurrency(totalBudget)}</span>
               </div>
             </div>
-            <Input label="合同收入（元，含税）" type="number" min="0" step="0.01" value={revenue} onChange={(e) => setRevenue(e.target.value)} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input label="合同收入（元，含税）" type="number" min="0" step="0.01" value={revenue} onChange={(e) => setRevenue(e.target.value)} />
+              <Input label="税率（%）" type="number" min="0" max="100" step="0.01" value={taxRate} onChange={(e) => setTaxRate(e.target.value)} />
+            </div>
           </>
         )}
 

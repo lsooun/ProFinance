@@ -3,6 +3,7 @@ import { calculateBudgetTotal } from '@/lib/format';
 
 export interface ProjectFinancials {
   contractRevenue: number;
+  netRevenue: number;
   budget: number;
   actualIncome: number;
   actualExpense: number;
@@ -81,10 +82,12 @@ export function projectFinancialsFromAggregates(project: Project): ProjectFinanc
 function buildProjectFinancials(project: Project, actualIncome: number, actualExpense: number): ProjectFinancials {
   const budget = calculateBudgetTotal(project.budget_labor, project.budget_travel, project.budget_other);
   const actualProfit = actualIncome - actualExpense;
-  const netRevenue = project.cost_sheet?.total_revenue_without_tax ?? project.revenue;
+  const netRevenue = project.cost_sheet?.total_revenue_without_tax
+    ?? project.revenue / (1 + (project.tax_rate || 0) / 100);
   const plannedProfit = project.cost_sheet?.gross_margin ?? netRevenue - budget;
   return {
     contractRevenue: project.revenue,
+    netRevenue,
     budget,
     actualIncome,
     actualExpense,

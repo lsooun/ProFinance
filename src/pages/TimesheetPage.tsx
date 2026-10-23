@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import {
   Card, Button, Input, Select, Modal, EmptyState, StatCard,
@@ -7,7 +7,7 @@ import { formatDate, formatHours } from '@/lib/format';
 import { TIME_UNIT_HINT, TIME_UNIT_LABELS, toCanonicalHours, type TimeUnit } from '@/lib/timeUnits';
 import type { Person, Project, TimesheetEntry } from '@/types';
 import {
-  getPersons, getManageableProjects, getTimesheets, createTimesheet, updateTimesheet, deleteTimesheet,
+  getPersons, getManageableProjects, getTimesheetsPage, createTimesheet, updateTimesheet, deleteTimesheet,
   getAssignmentsByProject,
 } from '@/lib/storage';
 import {
@@ -21,35 +21,55 @@ export default function TimesheetPage() {
   const { user } = useAuth();
   const isEmployee = user?.role === 'employee';
   const currentPersonId = user?.person_id ?? null;
-  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>(getTimesheets());
+  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState({ hours: 0, persons: 0 });
   const [persons] = useState<Person[]>(getPersons());
   const [projects] = useState<Project[]>(user ? getManageableProjects(user) : []);
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState<string>('');
   const [personFilter, setPersonFilter] = useState<string>('');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<TimesheetEntry | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<TimesheetEntry | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const pageSize = 25;
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError(null);
+    const timer = window.setTimeout(() => {
+      getTimesheetsPage({
+        page,
+        pageSize,
+        search: search.trim() || undefined,
+        projectId: projectFilter || undefined,
+        personId: isEmployee ? currentPersonId || undefined : personFilter || undefined,
+      })
+        .then((result) => {
+          if (!active) return;
+          setTimesheets(result.items);
+          setTotal(result.total);
+          setSummary(result.summary);
+        })
+        .catch(() => { if (active) setLoadError('工时记录加载失败，请稍后重试。'); })
+        .finally(() => { if (active) setLoading(false); });
+    }, 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [page, pageSize, search, projectFilter, personFilter, isEmployee, currentPersonId, refreshKey]);
 
   function reload() {
-    setTimesheets(getTimesheets());
+    setRefreshKey((key) => key + 1);
   }
 
-  const filtered = timesheets.filter((entry) => {
-    if (isEmployee && entry.person_id !== currentPersonId) return false;
-    const person = persons.find((item) => item.id === entry.person_id);
-    const keyword = search.toLowerCase();
-    const matchesSearch =
-      (entry.description || '').toLowerCase().includes(keyword) ||
-      (person?.name || '').toLowerCase().includes(keyword);
-    const matchesProject = !projectFilter || entry.project_id === projectFilter;
-    const matchesPerson = !personFilter || entry.person_id === personFilter;
-    return matchesSearch && matchesProject && matchesPerson;
-  });
-
-  const totalHours = filtered.reduce((sum, entry) => sum + entry.hours, 0);
+  const totalHours = summary.hours;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   function openNew() {
     setEditingEntry(null);
@@ -84,23 +104,23 @@ export default function TimesheetPage() {
     <div className="space-y-6 max-w-7xl mx-auto">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <StatCard label="工时合计" value={formatHours(totalHours)} icon={<Clock className="w-5 h-5" />} color="blue" />
-        <StatCard label="记录条数" value={String(filtered.length)} icon={<ArrowLeftRight className="w-5 h-5" />} color="emerald" />
-        <StatCard label="涉及人数" value={String(new Set(filtered.map((entry) => entry.person_id)).size)} icon={<User className="w-5 h-5" />} color="amber" />
+        <StatCard label="记录条数" value={String(total)} icon={<ArrowLeftRight className="w-5 h-5" />} color="emerald" />
+        <StatCard label="涉及人数" value={String(summary.persons)} icon={<User className="w-5 h-5" />} color="amber" />
       </div>
 
       <div className="flex flex-col lg:flex-row lg:items-center gap-3">
         <div className="relative flex-1 max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input type="text" placeholder="搜索人员或工作内容…" value={search} onChange={(e) => setSearch(e.target.value)}
+          <input type="text" placeholder="搜索人员或工作内容…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="h-10 w-full rounded-lg border border-slate-300 pl-10 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none" />
         </div>
-        <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+        <select value={projectFilter} onChange={(e) => { setProjectFilter(e.target.value); setPage(1); }}
           className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
           <option value="">全部项目</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
         {!isEmployee && (
-          <select value={personFilter} onChange={(e) => setPersonFilter(e.target.value)}
+          <select value={personFilter} onChange={(e) => { setPersonFilter(e.target.value); setPage(1); }}
             className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
             <option value="">全部人员</option>
             {persons.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
@@ -114,13 +134,17 @@ export default function TimesheetPage() {
         </Button>
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <Card className="p-12 text-center text-sm text-slate-500">正在加载工时记录…</Card>
+      ) : loadError ? (
+        <Card className="p-6 text-sm text-rose-700">{loadError}</Card>
+      ) : total === 0 ? (
         <Card className="p-6">
           <EmptyState
             icon={<Clock className="w-6 h-6" />}
-            title={timesheets.length === 0 ? '暂无工时记录' : '没有匹配的工时记录'}
-            description={timesheets.length === 0 ? '填报第一条工时，开始跟踪项目投入。' : '请调整筛选条件。'}
-            action={timesheets.length === 0 && (!isEmployee || currentPersonId) ? <Button onClick={openNew}><Plus className="w-4 h-4" /> 填报工时</Button> : undefined}
+            title={search || projectFilter || personFilter ? '没有匹配的工时记录' : '暂无工时记录'}
+            description={search || projectFilter || personFilter ? '请调整筛选条件。' : '填报第一条工时，开始跟踪项目投入。'}
+            action={!search && !projectFilter && !personFilter && (!isEmployee || currentPersonId) ? <Button onClick={openNew}><Plus className="w-4 h-4" /> 填报工时</Button> : undefined}
           />
         </Card>
       ) : (
@@ -138,7 +162,7 @@ export default function TimesheetPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filtered.map((entry) => (
+                {timesheets.map((entry) => (
                   <tr key={entry.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{formatDate(entry.date)}</td>
                     <td className="px-4 py-3 text-slate-900 font-medium">{personName(entry.person_id)}</td>
@@ -154,6 +178,13 @@ export default function TimesheetPage() {
               </tbody>
             </table>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3">
+            <p className="text-xs text-slate-500">共 {total} 条，第 {page} / {totalPages} 页</p>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</Button>
+              <Button variant="outline" size="sm" disabled={page >= totalPages || loading} onClick={() => setPage((value) => value + 1)}>下一页</Button>
+            </div>
+          </div>
         </Card>
       )}
 
@@ -165,7 +196,7 @@ export default function TimesheetPage() {
           persons={persons}
           projects={projects}
           lockedPersonId={isEmployee ? currentPersonId : null}
-          onSaved={() => { setModalOpen(false); reload(); }}
+          onSaved={() => { setModalOpen(false); setPage(1); reload(); }}
         />
       )}
 
@@ -175,7 +206,7 @@ export default function TimesheetPage() {
           onClose={() => setImportOpen(false)}
           persons={persons}
           projects={projects}
-          onImported={() => { setImportOpen(false); reload(); }}
+          onImported={() => { setImportOpen(false); setPage(1); reload(); }}
         />
       )}
 

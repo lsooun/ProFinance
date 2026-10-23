@@ -7,7 +7,8 @@ export type PageKey =
   | 'timesheets'
   | 'personnel'
   | 'reports'
-  | 'users';
+  | 'users'
+  | 'audit';
 
 const PAGES: PageKey[] = [
   'dashboard',
@@ -17,6 +18,7 @@ const PAGES: PageKey[] = [
   'personnel',
   'reports',
   'users',
+  'audit',
 ];
 
 export interface RouteState {
