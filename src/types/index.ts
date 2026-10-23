@@ -112,6 +112,23 @@ export interface CostSheetVersionSummary {
   approved_by_name: string | null;
 }
 
+export interface ReportData {
+  projects: Project[];
+  persons: Person[];
+  transactions: Transaction[];
+  timesheets: TimesheetEntry[];
+  invoicePlans: InvoicePlan[];
+  years: number[];
+}
+
+export interface PersonnelData {
+  persons: Person[];
+  users: UserAccount[];
+  assignments: ProjectAssignment[];
+  timesheets: TimesheetEntry[];
+  projectIds: string[];
+}
+
 export interface ProjectDetailData {
   project: Project;
   transactions: Transaction[];

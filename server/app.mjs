@@ -863,6 +863,56 @@ export function createApp({
       return true;
     }
 
+    if (pathname === '/api/reports' && method === 'GET') {
+      requireManager(user);
+      const projectFilters = ['p.deleted_at IS NULL'];
+      const projectParams = [];
+      if (user.role === 'manager') {
+        projectFilters.push('p.manager_user_id = ?');
+        projectParams.push(user.id);
+      }
+      const projects = db.prepare(
+        `${PROJECT_SELECT} WHERE ${projectFilters.join(' AND ')} ORDER BY p.created_at DESC`
+      ).all(...projectParams).map(mapProject);
+      const projectIds = projects.map((project) => project.id);
+      const allowed = new Set(projectIds);
+      const transactions = db.prepare(
+        'SELECT * FROM transactions WHERE deleted_at IS NULL ORDER BY transaction_date DESC'
+      ).all().filter((row) => !row.project_id || allowed.has(row.project_id));
+      const timesheets = db.prepare('SELECT * FROM timesheets ORDER BY date DESC').all().filter((row) => allowed.has(row.project_id));
+      const invoicePlans = db.prepare('SELECT * FROM invoice_plans ORDER BY date ASC').all().filter((row) => allowed.has(row.project_id));
+      const persons = db.prepare('SELECT * FROM persons ORDER BY name COLLATE NOCASE').all().map(mapPerson);
+      const years = [...new Set([
+        ...transactions.map((row) => new Date(row.transaction_date).getFullYear()),
+        ...timesheets.map((row) => new Date(row.date).getFullYear()),
+        ...invoicePlans.map((row) => new Date(row.date).getFullYear()),
+      ])].filter((year) => Number.isFinite(year)).sort((a, b) => b - a);
+      sendJson(res, 200, { projects, persons, transactions, timesheets, invoicePlans, years });
+      return true;
+    }
+
+    if (pathname === '/api/personnel' && method === 'GET') {
+      requireManager(user);
+      const projectFilters = ['p.deleted_at IS NULL'];
+      const projectParams = [];
+      if (user.role === 'manager') {
+        projectFilters.push('p.manager_user_id = ?');
+        projectParams.push(user.id);
+      }
+      const activeProjectIds = db.prepare(
+        `SELECT p.id FROM projects p WHERE ${projectFilters.join(' AND ')}`
+      ).all(...projectParams).map((row) => row.id);
+      const allowed = new Set(activeProjectIds);
+      const persons = db.prepare('SELECT * FROM persons ORDER BY name COLLATE NOCASE').all().map(mapPerson);
+      const assignments = db.prepare('SELECT * FROM project_assignments').all().filter((row) => allowed.has(row.project_id));
+      const timesheets = db.prepare('SELECT * FROM timesheets').all().filter((row) => !row.project_id || allowed.has(row.project_id));
+      const users = user.role === 'admin'
+        ? db.prepare('SELECT id, email, full_name, role, is_active, person_id, created_at FROM users ORDER BY created_at ASC').all().map(publicUser)
+        : [];
+      sendJson(res, 200, { persons, users, assignments, timesheets, projectIds: activeProjectIds });
+      return true;
+    }
+
     if (pathname === '/api/dashboard' && method === 'GET') {
       const filters = ['p.deleted_at IS NULL'];
       const params = [];

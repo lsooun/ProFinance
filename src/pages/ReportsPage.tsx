@@ -1,17 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/auth-context';
 import { Card, Button, Badge, Select } from '@/components/ui';
 import { formatCurrency, formatCurrencyDetailed, formatHours, formatDate } from '@/lib/format';
-import type { Transaction, Project, Person, TimesheetEntry, InvoicePlan, InvoiceStatus } from '@/types';
+import type { InvoiceStatus } from '@/types';
 import {
   PERSON_ROLE_LABELS, INVOICE_STATUS_LABELS, INVOICE_STATUS_COLORS, BUDGET_CATEGORY_LABELS,
   PROJECT_CATEGORY_LABELS, PROJECT_CATEGORY_COLORS,
 } from '@/types';
 import { effectiveInvoiceStatus, invoiceAmount, projectFinancials } from '@/lib/finance';
-import {
-  getTransactions, getManageableProjects, getPersons, getTimesheets,
-  getProjectPlannedHours, getAllInvoicePlans,
-} from '@/lib/storage';
+import { getReportData } from '@/lib/storage';
+import type { ReportData } from '@/types';
 import {
   FileBarChart, Download, TrendingUp, TrendingDown, Wallet,
   ChevronLeft, ChevronRight, Clock, Users, FileText, PieChart,
@@ -43,21 +41,30 @@ function downloadCSV(filename: string, headers: string[], rows: unknown[][]): vo
 export default function ReportsPage() {
   const { profile } = useAuth();
   const isManager = profile?.role === 'manager';
-  const [transactions] = useState<Transaction[]>(getTransactions());
-  const [projects] = useState<Project[]>(profile ? getManageableProjects(profile) : []);
-  const [persons] = useState<Person[]>(getPersons());
-  const [timesheets] = useState<TimesheetEntry[]>(getTimesheets());
-  const [invoicePlans] = useState<InvoicePlan[]>(getAllInvoicePlans());
+  const [data, setData] = useState<ReportData | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<ReportTab>('financial');
   const [reportType, setReportType] = useState<ReportType>('monthly');
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
 
-  const years = [...new Set([
-    ...transactions.map((tx) => new Date(tx.transaction_date).getFullYear()),
-    ...timesheets.map((entry) => new Date(entry.date).getFullYear()),
-    ...invoicePlans.map((plan) => new Date(plan.date).getFullYear()),
-  ])].filter((year) => Number.isFinite(year)).sort((a, b) => b - a);
+  useEffect(() => {
+    let active = true;
+    getReportData()
+      .then((result) => { if (active) setData(result); })
+      .catch(() => { if (active) setLoadError('报表加载失败，请稍后重试。'); });
+    return () => { active = false; };
+  }, []);
+
+  if (loadError) {
+    return <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loadError}</div>;
+  }
+  if (!data) {
+    return <div className="py-24 text-center text-sm text-slate-500">正在加载报表数据…</div>;
+  }
+
+  const { transactions, projects, persons, timesheets, invoicePlans } = data;
+  const years = [...data.years];
   if (years.length === 0) years.push(new Date().getFullYear());
   if (!years.includes(selectedYear)) years.unshift(selectedYear);
 
@@ -129,7 +136,7 @@ export default function ReportsPage() {
 
   const periodTimesheets = timesheets.filter((entry) => inPeriod(entry.date));
   const projectHoursData = projects.map((project) => {
-    const planned = getProjectPlannedHours(project.id);
+    const planned = project.aggregate_planned_hours ?? 0;
     const actual = periodTimesheets.filter((entry) => entry.project_id === project.id).reduce((sum, entry) => sum + entry.hours, 0);
     return { projectId: project.id, projectName: project.name, planned, actual, variance: actual - planned };
   }).filter((project) => project.planned > 0 || project.actual > 0).sort((a, b) => b.actual - a.actual);

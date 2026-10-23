@@ -3,6 +3,8 @@ import type {
   AuditLogPage,
   DashboardData,
   ProjectDetailData,
+  PersonnelData,
+  ReportData,
   BootstrapData,
   PaginatedProjects,
   PaginatedTransactions,
@@ -36,12 +38,6 @@ function data(): BootstrapData {
 
 export async function loadBootstrap(): Promise<BootstrapData> {
   const result = await apiRequest<BootstrapData>('/api/bootstrap');
-  cache = result;
-  return result;
-}
-
-export async function loadPageData(): Promise<BootstrapData> {
-  const result = await apiRequest<BootstrapData>('/api/page-data');
   cache = result;
   return result;
 }
@@ -557,6 +553,14 @@ export async function restoreCostSheetVersion(projectId: string, version: number
 
 export async function getInvoicePlansForProject(projectId: string): Promise<InvoicePlan[]> {
   return apiRequest<InvoicePlan[]>(`/api/projects/${encodeURIComponent(projectId)}/invoice-plans`);
+}
+
+export async function getReportData(): Promise<ReportData> {
+  return apiRequest<ReportData>('/api/reports');
+}
+
+export async function getPersonnelData(): Promise<PersonnelData> {
+  return apiRequest<PersonnelData>('/api/personnel');
 }
 
 export async function getProjectDetail(projectId: string): Promise<ProjectDetailData> {

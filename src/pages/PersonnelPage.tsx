@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Card, Button, Input, Select, Modal, Badge, EmptyState,
 } from '@/components/ui';
@@ -7,11 +7,10 @@ import {
   PERSON_ROLE_LABELS, type Person, type PersonRole,
 } from '@/types';
 import {
-  getPersons, createPerson, updatePerson, deletePerson,
-  getPersonActualHours, getAssignmentsByPerson, getUsers, createUser,
+  createPerson, updatePerson, deletePerson, createUser, getPersonnelData,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
-import type { UserAccount, UserRole } from '@/types';
+import type { UserAccount, UserRole, ProjectAssignment, TimesheetEntry } from '@/types';
 import {
   UserPlus, Pencil, Trash2, Users, AlertCircle, Mail, Phone, Briefcase, Clock, KeyRound, Settings,
 } from 'lucide-react';
@@ -21,8 +20,12 @@ const ALL_ROLES: PersonRole[] = ['project_manager', 'consultant', 'developer', '
 export default function PersonnelPage({ onManageAccounts }: { onManageAccounts?: () => void }) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'admin';
-  const [persons, setPersons] = useState<Person[]>(getPersons());
-  const [accounts, setAccounts] = useState<UserAccount[]>(isAdmin ? getUsers() : []);
+  const [persons, setPersons] = useState<Person[]>([]);
+  const [accounts, setAccounts] = useState<UserAccount[]>([]);
+  const [assignments, setAssignments] = useState<ProjectAssignment[]>([]);
+  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,9 +40,22 @@ export default function PersonnelPage({ onManageAccounts }: { onManageAccounts?:
   const [accountSaving, setAccountSaving] = useState(false);
 
   function reload() {
-    setPersons(getPersons());
-    setAccounts(isAdmin ? getUsers() : []);
+    setLoading(true);
+    setLoadError(null);
+    getPersonnelData()
+      .then((data) => {
+        setPersons(data.persons);
+        setAccounts(data.users);
+        setAssignments(data.assignments);
+        setTimesheets(data.timesheets);
+      })
+      .catch(() => setLoadError('人员数据加载失败，请稍后重试。'))
+      .finally(() => setLoading(false));
   }
+
+  useEffect(() => {
+    reload();
+  }, []);
 
   function openAccount(person: Person) {
     setAccountPerson(person);
@@ -119,7 +135,11 @@ export default function PersonnelPage({ onManageAccounts }: { onManageAccounts?:
         </Button>
       </div>
 
-      {filtered.length === 0 ? (
+      {loading ? (
+        <Card className="p-12 text-center text-sm text-slate-500">正在加载人员数据…</Card>
+      ) : loadError ? (
+        <Card className="p-6 text-sm text-rose-700">{loadError}</Card>
+      ) : filtered.length === 0 ? (
         <Card className="p-6">
           <EmptyState
             icon={<Users className="w-6 h-6" />}
@@ -131,8 +151,8 @@ export default function PersonnelPage({ onManageAccounts }: { onManageAccounts?:
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((person) => {
-            const actualHours = getPersonActualHours(person.id);
-            const assignments = getAssignmentsByPerson(person.id);
+            const actualHours = timesheets.filter((entry) => entry.person_id === person.id).reduce((sum, entry) => sum + entry.hours, 0);
+            const personAssignments = assignments.filter((assignment) => assignment.person_id === person.id);
             return (
               <Card key={person.id} className="p-5">
                 <div className="flex items-start justify-between mb-3">
@@ -183,7 +203,7 @@ export default function PersonnelPage({ onManageAccounts }: { onManageAccounts?:
                     <div className="flex items-center justify-center gap-1 text-xs text-slate-500 mb-0.5">
                       <Briefcase className="w-3 h-3" /> 项目数
                     </div>
-                    <p className="text-lg font-bold text-slate-900">{assignments.length}</p>
+                    <p className="text-lg font-bold text-slate-900">{personAssignments.length}</p>
                   </div>
                   <div className="text-center">
                     <div className="flex items-center justify-center gap-1 text-xs text-slate-500 mb-0.5">
