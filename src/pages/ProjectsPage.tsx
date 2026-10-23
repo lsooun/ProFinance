@@ -126,14 +126,14 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
             placeholder="按项目名称或客户搜索…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 pl-10 pr-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+            className="h-10 w-full rounded-lg border border-slate-300 pl-10 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
           />
         </div>
 
         <select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value as ProjectCategory | 'unclassified' | '')}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+          className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
           aria-label="项目分类筛选"
         >
           <option value="">全部分类</option>
@@ -154,7 +154,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
               <button
                 key={status}
                 onClick={() => toggleStatus(status)}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-all ${
+                className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-all ${
                   active
                     ? STATUS_COLORS[status] + ' ring-1 ring-offset-0'
                     : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'

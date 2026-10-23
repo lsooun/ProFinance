@@ -20,7 +20,7 @@ export function Button({
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
   size?: 'sm' | 'md' | 'lg';
 } & ButtonHTMLAttributes<HTMLButtonElement>) {
-  const base = 'inline-flex items-center justify-center gap-2 font-medium rounded-lg transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-1';
+  const base = 'inline-flex items-center justify-center gap-2 font-medium rounded-lg whitespace-nowrap transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-1';
   const variants = {
     primary: 'bg-slate-900 text-white hover:bg-slate-800 focus:ring-slate-400 shadow-sm',
     secondary: 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-400 shadow-sm',
@@ -29,9 +29,9 @@ export function Button({
     outline: 'border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 focus:ring-slate-300',
   };
   const sizes = {
-    sm: 'text-xs px-3 py-1.5',
-    md: 'text-sm px-4 py-2',
-    lg: 'text-base px-5 py-2.5',
+    sm: 'h-8 text-xs px-3',
+    md: 'h-10 text-sm px-4',
+    lg: 'h-11 text-base px-5',
   };
   return (
     <button className={`${base} ${variants[variant]} ${sizes[size]} ${className}`} {...props}>
@@ -45,7 +45,7 @@ export function Input({ label, error, className = '', ...props }: { label?: stri
     <div className="space-y-1.5">
       {label && <label className="block text-sm font-medium text-slate-700">{label}</label>}
       <input
-        className={`w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none transition-colors ${error ? 'border-rose-400' : ''} ${className}`}
+        className={`h-10 w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 ${error ? 'border-rose-400' : ''} ${className}`}
         {...props}
       />
       {error && <p className="text-xs text-rose-600">{error}</p>}
@@ -58,7 +58,7 @@ export function Select({ label, children, className = '', ...props }: { label?: 
     <div className="space-y-1.5">
       {label && <label className="block text-sm font-medium text-slate-700">{label}</label>}
       <select
-        className={`w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none transition-colors ${className}`}
+        className={`h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 transition-colors focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400 ${className}`}
         {...props}
       >
         {children}

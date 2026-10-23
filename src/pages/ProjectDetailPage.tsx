@@ -477,7 +477,7 @@ export default function ProjectDetailPage({
                                 <select
                                   value={plan.status}
                                   onChange={(e) => void handleStatusChange(plan.id, e.target.value as InvoiceStatus)}
-                                  className={`rounded-md border px-2 py-1 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 ${INVOICE_STATUS_COLORS[plan.status]}`}
+                                  className={`h-8 rounded-md border px-2 py-0 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-blue-500 ${INVOICE_STATUS_COLORS[plan.status]}`}
                                 >
                                   {(Object.keys(INVOICE_STATUS_LABELS) as InvoiceStatus[]).map((item) => (
                                     <option key={item} value={item}>{INVOICE_STATUS_LABELS[item]}</option>
@@ -737,13 +737,13 @@ export default function ProjectDetailPage({
                 <select
                   value={uploadCategory}
                   onChange={(e) => setUploadCategory(e.target.value as AttachmentCategory)}
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 >
                   {(Object.keys(ATTACHMENT_CATEGORY_LABELS) as AttachmentCategory[]).map((category) => (
                     <option key={category} value={category}>{ATTACHMENT_CATEGORY_LABELS[category]}</option>
                   ))}
                 </select>
-                <label className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-white transition-colors cursor-pointer ${uploading ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                <label className={`inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-medium text-white transition-colors cursor-pointer ${uploading ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'}`}>
                   <Upload className="w-4 h-4" /> {uploading ? '上传中…' : '上传文档'}
                   <input type="file" accept=".xlsx,.xls,.doc,.docx,.pdf" onChange={handleFileUpload} className="hidden" disabled={uploading} />
                 </label>
@@ -760,7 +760,7 @@ export default function ProjectDetailPage({
                 <select
                   value={attachmentFilter}
                   onChange={(e) => setAttachmentFilter(e.target.value as AttachmentCategory | 'all')}
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  className="h-10 cursor-pointer rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
                 >
                   <option value="all">全部文档</option>
                   {(Object.keys(ATTACHMENT_CATEGORY_LABELS) as AttachmentCategory[]).map((category) => (
@@ -1016,7 +1016,7 @@ function AssignMemberModal({
           </div>
         ) : (
           <select value={personId} onChange={(e) => setPersonId(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
+            className="h-10 w-full cursor-pointer rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none">
             <option value="">选择人员…</option>
             {availablePersons.map((person) => <option key={person.id} value={person.id}>{person.name} — {PERSON_ROLE_LABELS[person.role]}</option>)}
             {availablePersons.length === 0 && <option value="" disabled>所有在职人员都已分配</option>}
