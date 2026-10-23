@@ -760,8 +760,60 @@ test('项目可以保存 Cost Sheet 计算结果并上传分类文档', async ()
   assert.equal(attachment.status, 201);
   assert.equal(attachment.data.category, 'sow');
 
-  const deleted = await api(`/api/projects/${created.data.id}`, { method: 'DELETE', cookie: managerCookie });
+  const txCreated = await api('/api/transactions', {
+    method: 'POST', cookie: managerCookie,
+    body: {
+      project_id: created.data.id, type: 'income', category: '开发服务',
+      description: '重复检测测试', amount: 10, transaction_date: '2026-10-20',
+    },
+  });
+  assert.equal(txCreated.status, 201);
+  const duplicateCheck = await api('/api/transactions/check-duplicates', {
+    method: 'POST', cookie: managerCookie,
+    body: { rows: [{
+      project_id: created.data.id, type: 'income', category: '开发服务',
+      description: '重复检测测试', amount: 10, transaction_date: '2026-10-20',
+    }] },
+  });
+  assert.equal(duplicateCheck.status, 200);
+  assert.equal(duplicateCheck.data.results[0].duplicate, true);
+
+  const txDeleted = await api(`/api/transactions/${txCreated.data.id}`, {
+    method: 'DELETE', cookie: managerCookie, body: { delete_reason: '重复记录' },
+  });
+  assert.equal(txDeleted.status, 200);
+  const txRecycle = await api('/api/recycle-bin?type=transaction', { cookie: adminCookie });
+  assert.equal(txRecycle.status, 200);
+  assert.ok(txRecycle.data.items.some((item) => item.id === txCreated.data.id && item.delete_reason === '重复记录'));
+  const txRestored = await api(`/api/transactions/${txCreated.data.id}/restore`, { method: 'POST', cookie: managerCookie });
+  assert.equal(txRestored.status, 200);
+  await api(`/api/transactions/${txCreated.data.id}`, {
+    method: 'DELETE', cookie: managerCookie, body: { delete_reason: '再次清理' },
+  });
+  const txPurged = await api(`/api/transactions/${txCreated.data.id}/permanent`, { method: 'DELETE', cookie: adminCookie });
+  assert.equal(txPurged.status, 200);
+
+  const deleted = await api(`/api/projects/${created.data.id}`, {
+    method: 'DELETE', cookie: managerCookie, body: { delete_reason: '测试清理' },
+  });
   assert.equal(deleted.status, 200);
+  assert.equal(app.db.prepare('SELECT COUNT(*) AS n FROM project_cost_sheet_versions WHERE project_id = ?').get(created.data.id).n, 3);
+  assert.ok(app.db.prepare('SELECT deleted_at FROM projects WHERE id = ?').get(created.data.id).deleted_at);
+
+  const recycle = await api('/api/recycle-bin?type=project', { cookie: adminCookie });
+  assert.equal(recycle.status, 200);
+  assert.ok(recycle.data.items.some((item) => item.id === created.data.id && item.delete_reason === '测试清理'));
+
+  const restoredProject = await api(`/api/projects/${created.data.id}/restore`, { method: 'POST', cookie: managerCookie });
+  assert.equal(restoredProject.status, 200);
+  assert.equal(restoredProject.data.cost_sheet_version, 3);
+
+  const deletedAgain = await api(`/api/projects/${created.data.id}`, {
+    method: 'DELETE', cookie: managerCookie, body: { delete_reason: '最终清理' },
+  });
+  assert.equal(deletedAgain.status, 200);
+  const purged = await api(`/api/projects/${created.data.id}/permanent`, { method: 'DELETE', cookie: adminCookie });
+  assert.equal(purged.status, 200);
   assert.equal(app.db.prepare('SELECT COUNT(*) AS n FROM project_cost_sheet_versions WHERE project_id = ?').get(created.data.id).n, 0);
 });
 

@@ -10,7 +10,7 @@ import {
 } from '@/types';
 import {
   getTransactions, getTransactionsPage, getManageableProjects, createTransaction, updateTransaction, deleteTransaction,
-  getInvoicePlansByProject,
+  getInvoicePlansByProject, checkTransactionDuplicates,
 } from '@/lib/storage';
 import { suggestedBudgetCategory } from '@/lib/finance';
 import {
@@ -40,6 +40,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
   const [presetProjectId] = useState<string | null>(initialProjectId || null);
   const [importOpen, setImportOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
   const pageSize = 25;
 
   useEffect(() => {
@@ -90,10 +91,11 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
   async function handleDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
-    const ok = await deleteTransaction(deleteTarget.id);
+    const ok = await deleteTransaction(deleteTarget.id, deleteReason);
     setDeleting(false);
     if (ok) {
       setDeleteTarget(null);
+      setDeleteReason('');
       reload();
     }
   }
@@ -179,7 +181,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
                     </td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       <button onClick={() => openEdit(tx)} className="text-slate-400 hover:text-blue-600 p-1 rounded transition-colors" title="编辑"><Pencil className="w-4 h-4" /></button>
-                      <button onClick={() => setDeleteTarget(tx)} className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors ml-1" title="删除"><Trash2 className="w-4 h-4" /></button>
+                      <button onClick={() => { setDeleteTarget(tx); setDeleteReason(''); }} className="text-slate-400 hover:text-rose-600 p-1 rounded transition-colors ml-1" title="删除"><Trash2 className="w-4 h-4" /></button>
                     </td>
                   </tr>
                 ))}
@@ -227,9 +229,11 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
               </div>
               <p className="text-sm text-slate-700">
                 确定删除这笔<span className="font-semibold">{deleteTarget.type === 'income' ? '回款' : '付款'}</span>记录（
-                <span className="font-semibold">{formatCurrencyDetailed(deleteTarget.amount)}</span>）吗？此操作不可撤销。
+                <span className="font-semibold">{formatCurrencyDetailed(deleteTarget.amount)}</span>）吗？
+                记录会移入回收站，可在 30 天内恢复。
               </p>
             </div>
+            <Textarea label="删除原因（可选）" value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} rows={2} placeholder="例如：重复录入、金额错误" />
             <div className="flex justify-end gap-3">
               <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>取消</Button>
               <Button variant="danger" onClick={() => void handleDelete()} disabled={deleting}>{deleting ? '删除中…' : '确认删除'}</Button>
@@ -406,6 +410,7 @@ function TransactionImportModal({
   const [parsedRows, setParsedRows] = useState<ImportRow[]>([]);
   const [hasParsed, setHasParsed] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
 
   const TEMPLATE_HEADERS = ['类型', '日期', '分类', '描述', '金额', '项目', '预算分类'];
 
@@ -503,9 +508,28 @@ function TransactionImportModal({
 
   async function handleImport() {
     const validRows = parsedRows.filter((row) => !row.error);
+    let duplicateFlags: boolean[];
+    try {
+      duplicateFlags = await checkTransactionDuplicates(validRows.map((row) => ({
+        project_id: row.projectId,
+        type: row.type,
+        transaction_date: row.date,
+        amount: row.amount,
+        category: row.category || (row.type === 'income' ? INCOME_CATEGORIES[0] : EXPENSE_CATEGORIES[0]),
+        description: row.description,
+      })));
+    } catch {
+      notify('重复数据检测失败，请稍后重试', 'error');
+      return;
+    }
     let imported = 0;
+    let skipped = 0;
     let failed = 0;
-    for (const row of validRows) {
+    for (const [index, row] of validRows.entries()) {
+      if (duplicateFlags[index]) {
+        skipped++;
+        continue;
+      }
       const created = await createTransaction({
         type: row.type,
         category: row.category || (row.type === 'income' ? INCOME_CATEGORIES[0] : EXPENSE_CATEGORIES[0]),
@@ -521,7 +545,9 @@ function TransactionImportModal({
       else failed++;
     }
     if (failed > 0) notify(`${failed} 条记录导入失败`, 'error');
+    if (skipped > 0) notify(`已跳过 ${skipped} 条重复记录`, 'success');
     setImportedCount(imported);
+    setSkippedCount(skipped);
     setTimeout(() => {
       onImported();
     }, 1200);
@@ -545,6 +571,7 @@ function TransactionImportModal({
     setParsedRows([]);
     setHasParsed(false);
     setImportedCount(0);
+    setSkippedCount(0);
   }
 
   const validCount = parsedRows.filter((row) => !row.error).length;
@@ -552,13 +579,17 @@ function TransactionImportModal({
 
   return (
     <Modal open={open} onClose={onClose} title="导入收支记录" size="lg">
-      {importedCount > 0 ? (
+      {importedCount > 0 || skippedCount > 0 ? (
         <div className="text-center py-8">
           <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
             <CheckCircle2 className="w-7 h-7 text-emerald-600" />
           </div>
-          <h3 className="text-lg font-semibold text-slate-900">成功导入 {importedCount} 条收支记录</h3>
-          <p className="text-sm text-slate-500 mt-1">收支数据已保存。</p>
+          <h3 className="text-lg font-semibold text-slate-900">
+            {importedCount > 0 ? `成功导入 ${importedCount} 条收支记录` : '没有新增记录'}
+          </h3>
+          <p className="text-sm text-slate-500 mt-1">
+            {skippedCount > 0 ? `检测到 ${skippedCount} 条重复记录，已自动跳过。` : '收支数据已保存。'}
+          </p>
           <Button className="mt-4" onClick={() => { reset(); onClose(); }}>完成</Button>
         </div>
       ) : (

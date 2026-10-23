@@ -14,6 +14,7 @@ import PersonnelPage from '@/pages/PersonnelPage';
 import TimesheetPage from '@/pages/TimesheetPage';
 import ResetPasswordPage from '@/pages/ResetPasswordPage';
 import AuditLogsPage from '@/pages/AuditLogsPage';
+import RecycleBinPage from '@/pages/RecycleBinPage';
 import { getResetTokenFromHash, pathFor, useHashRoute } from '@/lib/router';
 
 function AppContent() {
@@ -25,7 +26,7 @@ function AppContent() {
 
   useEffect(() => {
     if (!profile) return;
-    const managerOnly = route.page === 'transactions' || route.page === 'personnel' || route.page === 'reports';
+    const managerOnly = route.page === 'transactions' || route.page === 'personnel' || route.page === 'reports' || route.page === 'recycle';
     const adminOnly = route.page === 'users' || route.page === 'audit';
     if ((managerOnly && !isManagerUp) || (adminOnly && profile.role !== 'admin')) {
       navigate('/dashboard', { replace: true });
@@ -97,6 +98,8 @@ function AppContent() {
     content = <UsersPage />;
   } else if (route.page === 'audit' && user.role === 'admin') {
     content = <AuditLogsPage />;
+  } else if (route.page === 'recycle' && isManagerUp) {
+    content = <RecycleBinPage />;
   } else {
     content = <DashboardPage onNavigate={(page) => navigate(pathFor(page))} />;
   }

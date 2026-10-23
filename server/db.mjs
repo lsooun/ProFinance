@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS projects (
   budget_other REAL NOT NULL DEFAULT 0,
   revenue REAL NOT NULL DEFAULT 0,
   tax_rate REAL NOT NULL DEFAULT 6,
+  deleted_at TEXT,
+  deleted_by TEXT,
+  delete_reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -503,6 +506,19 @@ function migrateDatabase(db) {
     if (!projectColumns().includes('tax_rate')) {
       db.exec('ALTER TABLE projects ADD COLUMN tax_rate REAL NOT NULL DEFAULT 6');
     }
+  });
+
+  runMigration('009_soft_delete', () => {
+    const projectCols = projectColumns();
+    if (!projectCols.includes('deleted_at')) db.exec('ALTER TABLE projects ADD COLUMN deleted_at TEXT');
+    if (!projectCols.includes('deleted_by')) db.exec('ALTER TABLE projects ADD COLUMN deleted_by TEXT');
+    if (!projectCols.includes('delete_reason')) db.exec("ALTER TABLE projects ADD COLUMN delete_reason TEXT NOT NULL DEFAULT ''");
+    db.exec('CREATE INDEX IF NOT EXISTS idx_projects_deleted ON projects(deleted_at)');
+    const transactionCols = db.prepare('PRAGMA table_info(transactions)').all().map((column) => column.name);
+    if (!transactionCols.includes('deleted_at')) db.exec('ALTER TABLE transactions ADD COLUMN deleted_at TEXT');
+    if (!transactionCols.includes('deleted_by')) db.exec('ALTER TABLE transactions ADD COLUMN deleted_by TEXT');
+    if (!transactionCols.includes('delete_reason')) db.exec("ALTER TABLE transactions ADD COLUMN delete_reason TEXT NOT NULL DEFAULT ''");
+    db.exec('CREATE INDEX IF NOT EXISTS idx_transactions_deleted ON transactions(deleted_at)');
   });
 }
 

@@ -50,6 +50,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
   const pageSize = 12;
 
   useEffect(() => {
@@ -110,10 +111,11 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
   async function handleDelete() {
     if (!deleteTarget) return;
     setDeleting(true);
-    const ok = await deleteProject(deleteTarget.id);
+    const ok = await deleteProject(deleteTarget.id, deleteReason);
     setDeleting(false);
     if (ok) {
       setDeleteTarget(null);
+      setDeleteReason('');
       setPage(1);
       reload();
     }
@@ -337,7 +339,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
                 {canEditProject && (
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={() => openEdit(project)}><Pencil className="w-3.5 h-3.5" /> 编辑</Button>
-                    <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(project)} className="text-rose-600 hover:bg-rose-50"><Trash2 className="w-3.5 h-3.5" /> 删除</Button>
+                    <Button variant="ghost" size="sm" onClick={() => { setDeleteTarget(project); setDeleteReason(''); }} className="text-rose-600 hover:bg-rose-50"><Trash2 className="w-3.5 h-3.5" /> 删除</Button>
                   </div>
                 )}
               </Card>
@@ -375,9 +377,10 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
               </div>
               <p className="text-sm text-slate-700">
                 确定要删除 <span className="font-semibold">{deleteTarget.name}</span> 吗？
-                相关项目成员、工时、回款计划和附件将一并删除；已关联的收支记录会保留，但会取消项目关联。此操作不可撤销。
+                项目会移入回收站，可在 30 天内恢复；项目成员、工时、回款计划和附件会一并隐藏。
               </p>
             </div>
+            <Textarea label="删除原因（可选）" value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} rows={2} placeholder="例如：项目取消、重复创建" />
             <div className="flex justify-end gap-3">
               <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>取消</Button>
               <Button variant="danger" onClick={() => void handleDelete()} disabled={deleting}>{deleting ? '删除中…' : '确认删除'}</Button>

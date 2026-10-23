@@ -188,6 +188,9 @@ export interface Project {
   cost_sheet_version?: number | null;
   cost_sheet_updated_at?: string | null;
   cost_sheet_baseline_version?: number | null;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  delete_reason?: string;
   aggregate_income?: number;
   aggregate_expense?: number;
   aggregate_hours?: number;
@@ -219,6 +222,34 @@ export interface Transaction {
   budget_category: BudgetCategory | null;
   invoice_plan_id: string | null;
   created_at: string;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  delete_reason?: string;
+}
+
+export interface RecycleProjectItem {
+  id: string;
+  name: string;
+  client: string;
+  revenue: number;
+  deleted_at: string;
+  deleted_by_name: string | null;
+  delete_reason: string;
+  days_remaining: number;
+}
+
+export interface RecycleTransactionItem extends Transaction {
+  project_name: string | null;
+  deleted_by_name: string | null;
+  days_remaining: number;
+}
+
+export interface RecycleBinPage<T> {
+  type: 'project' | 'transaction';
+  total: number;
+  page: number;
+  page_size: number;
+  items: T[];
 }
 
 export type PersonRole = 'project_manager' | 'consultant' | 'developer' | 'designer' | 'qa' | 'other';

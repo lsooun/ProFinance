@@ -11,6 +11,9 @@ import type {
   ManagerOption,
   Person,
   Project,
+  RecycleBinPage,
+  RecycleProjectItem,
+  RecycleTransactionItem,
   ProjectAssignment,
   ProjectAttachment,
   TimesheetEntry,
@@ -215,8 +218,8 @@ export async function updateProject(id: string, updates: Partial<Project> & { co
   return result;
 }
 
-export async function deleteProject(id: string): Promise<boolean> {
-  const result = await mutate<{ ok: boolean }>(`/api/projects/${encodeURIComponent(id)}`, 'DELETE');
+export async function deleteProject(id: string, reason = ''): Promise<boolean> {
+  const result = await mutate<{ ok: boolean }>(`/api/projects/${encodeURIComponent(id)}`, 'DELETE', { delete_reason: reason });
   if (!result?.ok) return false;
   const store = data();
   store.projects = store.projects.filter((project) => project.id !== id);
@@ -294,8 +297,8 @@ export async function updateTransaction(
   return result;
 }
 
-export async function deleteTransaction(id: string): Promise<boolean> {
-  const result = await mutate<{ ok: boolean }>(`/api/transactions/${encodeURIComponent(id)}`, 'DELETE');
+export async function deleteTransaction(id: string, reason = ''): Promise<boolean> {
+  const result = await mutate<{ ok: boolean }>(`/api/transactions/${encodeURIComponent(id)}`, 'DELETE', { delete_reason: reason });
   if (!result?.ok) return false;
   data().transactions = data().transactions.filter((tx) => tx.id !== id);
   return true;
@@ -578,6 +581,46 @@ export async function getTimesheetsPage(params: {
   if (params.projectId) query.set('project_id', params.projectId);
   if (params.personId) query.set('person_id', params.personId);
   return apiRequest<PaginatedTimesheets>(`/api/timesheets?${query.toString()}`);
+}
+
+export async function checkTransactionDuplicates(rows: Array<{
+  project_id: string | null; type: string; transaction_date: string; amount: number; category: string; description: string;
+}>): Promise<boolean[]> {
+  const result = await apiRequest<{ results: Array<{ duplicate: boolean }> }>('/api/transactions/check-duplicates', {
+    method: 'POST',
+    body: { rows },
+  });
+  return result.results.map((item) => item.duplicate);
+}
+
+// ===== Recycle bin =====
+
+export async function getRecycleBin<T extends 'project' | 'transaction'>(type: T, page = 1, pageSize = 30): Promise<RecycleBinPage<T extends 'project' ? RecycleProjectItem : RecycleTransactionItem>> {
+  return apiRequest(`/api/recycle-bin?type=${type}&page=${page}&page_size=${pageSize}`);
+}
+
+export async function restoreProject(id: string): Promise<Project | null> {
+  const result = await apiRequest<Project>(`/api/projects/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  const store = data();
+  if (!store.projects.some((project) => project.id === result.id)) store.projects.push(result);
+  return result;
+}
+
+export async function restoreTransaction(id: string): Promise<Transaction | null> {
+  const result = await apiRequest<Transaction>(`/api/transactions/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  const store = data();
+  if (!store.transactions.some((tx) => tx.id === result.id)) store.transactions.push(result);
+  return result;
+}
+
+export async function purgeProject(id: string): Promise<boolean> {
+  const result = await apiRequest<{ ok: boolean }>(`/api/projects/${encodeURIComponent(id)}/permanent`, { method: 'DELETE' });
+  return Boolean(result.ok);
+}
+
+export async function purgeTransaction(id: string): Promise<boolean> {
+  const result = await apiRequest<{ ok: boolean }>(`/api/transactions/${encodeURIComponent(id)}/permanent`, { method: 'DELETE' });
+  return Boolean(result.ok);
 }
 
 // ===== Audit logs =====

@@ -161,12 +161,12 @@ export function createApp({
   };
 
   const PROJECT_SELECT = `SELECT p.*, u.full_name AS manager_name,
-      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'income') AS aggregate_income,
-      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense') AS aggregate_expense,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.type = 'income') AS aggregate_income,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.type = 'expense') AS aggregate_expense,
       (SELECT COALESCE(SUM(ts.hours), 0) FROM timesheets ts WHERE ts.project_id = p.id) AS aggregate_hours,
       (SELECT COALESCE(SUM(a.planned_hours), 0) FROM project_assignments a WHERE a.project_id = p.id) AS aggregate_planned_hours,
-      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'income' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_income,
-      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_expense,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.type = 'income' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_income,
+      (SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.type = 'expense' AND substr(t.transaction_date, 1, 7) = strftime('%Y-%m', 'now', 'localtime')) AS aggregate_month_expense,
       (SELECT v.details_json FROM project_cost_sheet_versions v WHERE v.project_id = p.id AND v.is_current = 1 LIMIT 1) AS cost_sheet_json,
       (SELECT v.version FROM project_cost_sheet_versions v WHERE v.project_id = p.id AND v.is_current = 1 LIMIT 1) AS cost_sheet_version,
       (SELECT v.created_at FROM project_cost_sheet_versions v WHERE v.project_id = p.id AND v.is_current = 1 LIMIT 1) AS cost_sheet_updated_at,
@@ -196,7 +196,7 @@ export function createApp({
   };
 
   const projectWithManager = (id) => {
-    const row = db.prepare(`${PROJECT_SELECT} WHERE p.id = ?`).get(id);
+    const row = db.prepare(`${PROJECT_SELECT} WHERE p.id = ? AND p.deleted_at IS NULL`).get(id);
     if (!row) throw new HttpError(404, '项目不存在');
     return mapProject(row);
   };
@@ -360,7 +360,7 @@ export function createApp({
   function requireProjectManager(user, projectId) {
     if (user.role === 'admin') return;
     if (user.role !== 'manager') throw new HttpError(403, '没有执行此操作的权限');
-    const project = db.prepare('SELECT manager_user_id FROM projects WHERE id = ?').get(projectId);
+    const project = db.prepare('SELECT manager_user_id FROM projects WHERE id = ? AND deleted_at IS NULL').get(projectId);
     if (!project) throw new HttpError(404, '项目不存在');
     if (project.manager_user_id !== user.id) {
       throw new HttpError(403, '只能管理自己负责的项目');
@@ -371,19 +371,27 @@ export function createApp({
     if (user.role !== 'employee') return;
     if (!user.person_id) throw new HttpError(403, '当前账号未关联人员档案');
     const assignment = db.prepare(
-      'SELECT id FROM project_assignments WHERE project_id = ? AND person_id = ?'
+      'SELECT a.id FROM project_assignments a JOIN projects p ON p.id = a.project_id WHERE a.project_id = ? AND a.person_id = ? AND p.deleted_at IS NULL'
     ).get(projectId, user.person_id);
     if (!assignment) throw new HttpError(403, '无权访问该项目');
   }
 
   function buildBootstrap(user) {
     const allPersons = db.prepare('SELECT * FROM persons ORDER BY name COLLATE NOCASE').all().map(mapPerson);
-    const allAssignments = db.prepare('SELECT * FROM project_assignments').all();
-    const allTimesheets = db.prepare('SELECT * FROM timesheets ORDER BY date DESC').all();
-    const allProjects = db.prepare(`${PROJECT_SELECT} ORDER BY p.created_at DESC`).all().map(mapProject);
-    const allTransactions = db.prepare('SELECT * FROM transactions ORDER BY transaction_date DESC').all();
-    const allInvoices = db.prepare('SELECT * FROM invoice_plans ORDER BY date ASC').all();
-    const allAttachments = db.prepare('SELECT * FROM attachments ORDER BY created_at DESC').all().map(mapAttachment);
+    const allProjects = db.prepare(`${PROJECT_SELECT} WHERE p.deleted_at IS NULL ORDER BY p.created_at DESC`).all().map(mapProject);
+    const activeProjectIds = new Set(allProjects.map((project) => project.id));
+    const allAssignments = db.prepare('SELECT * FROM project_assignments').all().filter((row) => activeProjectIds.has(row.project_id));
+    const allTimesheets = db.prepare('SELECT * FROM timesheets ORDER BY date DESC').all().filter((row) => !row.project_id || activeProjectIds.has(row.project_id));
+    const allTransactions = db.prepare(
+      `SELECT t.* FROM transactions t
+       WHERE t.deleted_at IS NULL
+         AND (t.project_id IS NULL OR EXISTS (
+           SELECT 1 FROM projects p WHERE p.id = t.project_id AND p.deleted_at IS NULL
+         ))
+       ORDER BY t.transaction_date DESC`
+    ).all();
+    const allInvoices = db.prepare('SELECT * FROM invoice_plans ORDER BY date ASC').all().filter((row) => activeProjectIds.has(row.project_id));
+    const allAttachments = db.prepare('SELECT * FROM attachments ORDER BY created_at DESC').all().filter((row) => activeProjectIds.has(row.project_id)).map(mapAttachment);
 
     const managerOptions = db.prepare(
       `SELECT id, full_name, role
@@ -615,7 +623,8 @@ export function createApp({
     if (has('transaction_date')) out.transaction_date = requiredDate(body.transaction_date, '交易日期');
     if (has('project_id')) {
       if (body.project_id) {
-        rowById('projects', body.project_id);
+        const project = rowById('projects', body.project_id);
+        if (project.deleted_at) throw new HttpError(404, '项目不存在');
         out.project_id = body.project_id;
       } else {
         out.project_id = null;
@@ -674,7 +683,8 @@ export function createApp({
     const has = (key) => !partial || body[key] !== undefined;
     if (has('project_id')) {
       const projectId = requiredString(body.project_id, '项目');
-      rowById('projects', projectId);
+      const project = rowById('projects', projectId);
+      if (project.deleted_at) throw new HttpError(404, '项目不存在');
       if (user.role === 'manager') requireProjectManager(user, projectId);
       out.project_id = projectId;
     }
@@ -969,7 +979,7 @@ export function createApp({
       const search = (urlObj.searchParams.get('search') || '').trim();
       const category = urlObj.searchParams.get('category') || '';
       const statuses = (urlObj.searchParams.get('status') || '').split(',').filter((status) => PROJECT_STATUSES.includes(status));
-      const filters = ['1 = 1'];
+      const filters = ['p.deleted_at IS NULL'];
       const params = [];
       if (user.role === 'employee') {
         if (!user.person_id) {
@@ -994,8 +1004,8 @@ export function createApp({
       const total = db.prepare(`SELECT COUNT(*) AS count FROM projects p ${where}`).get(...params).count;
       const summary = db.prepare(
         `SELECT COALESCE(SUM(p.revenue), 0) AS contract,
-                COALESCE(SUM((SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'income')), 0) AS income,
-                COALESCE(SUM((SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.type = 'expense')), 0) AS expense
+                COALESCE(SUM((SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.type = 'income')), 0) AS income,
+                COALESCE(SUM((SELECT COALESCE(SUM(t.amount), 0) FROM transactions t WHERE t.project_id = p.id AND t.deleted_at IS NULL AND t.type = 'expense')), 0) AS expense
          FROM projects p ${where}`
       ).get(...params);
       const statusRows = db.prepare(
@@ -1153,6 +1163,40 @@ export function createApp({
       rowById('projects', id);
       requireProjectManager(user, id);
       const beforeProject = projectWithManager(id);
+      const body = await readJson(req);
+      const reason = optionalString(body.delete_reason, { max: 500 }) || '';
+      db.prepare(
+        'UPDATE projects SET deleted_at = ?, deleted_by = ?, delete_reason = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL'
+      ).run(nowISO(), user.id, reason, nowISO(), id);
+      writeAudit(req, user, 'project.delete', 'project', id, {
+        projectId: id, before: beforeProject, after: { deleted_at: nowISO(), delete_reason: reason },
+      });
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/projects\/([^/]+)\/restore$/);
+    if (match && method === 'POST') {
+      requireManager(user);
+      const id = match[1];
+      const project = db.prepare('SELECT * FROM projects WHERE id = ? AND deleted_at IS NOT NULL').get(id);
+      if (!project) throw new HttpError(404, '回收站中不存在该项目');
+      if (user.role === 'manager' && project.manager_user_id !== user.id) {
+        throw new HttpError(403, '只能恢复自己负责的项目');
+      }
+      db.prepare('UPDATE projects SET deleted_at = NULL, deleted_by = NULL, delete_reason = \'\', updated_at = ? WHERE id = ?').run(nowISO(), id);
+      const restored = projectWithManager(id);
+      writeAudit(req, user, 'project.restore', 'project', id, { projectId: id, before: { deleted_at: project.deleted_at, delete_reason: project.delete_reason }, after: restored });
+      sendJson(res, 200, restored);
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/projects\/([^/]+)\/permanent$/);
+    if (match && method === 'DELETE') {
+      requireAdmin(user);
+      const id = match[1];
+      const project = rowById('projects', id);
+      if (!project.deleted_at) throw new HttpError(400, '只能永久删除回收站中的项目');
       const files = db.prepare('SELECT storage_path FROM attachments WHERE project_id = ?').all(id);
       db.exec('BEGIN');
       try {
@@ -1166,7 +1210,7 @@ export function createApp({
       for (const file of files) {
         try { fs.unlinkSync(path.join(uploadDir, file.storage_path)); } catch { /* ignore missing file */ }
       }
-      writeAudit(req, user, 'project.delete', 'project', id, { projectId: id, before: beforeProject });
+      writeAudit(req, user, 'project.purge', 'project', id, { projectId: id, before: project });
       sendJson(res, 200, { ok: true });
       return true;
     }
@@ -1180,7 +1224,7 @@ export function createApp({
       const type = urlObj.searchParams.get('type') || '';
       const projectId = urlObj.searchParams.get('project_id') || '';
       const category = urlObj.searchParams.get('category') || '';
-      const filters = [];
+      const filters = ['t.deleted_at IS NULL', '(t.project_id IS NULL OR EXISTS (SELECT 1 FROM projects pj WHERE pj.id = t.project_id AND pj.deleted_at IS NULL))'];
       const params = [];
       if (user.role === 'manager') {
         filters.push('t.project_id IN (SELECT p.id FROM projects p WHERE p.manager_user_id = ?)');
@@ -1214,6 +1258,31 @@ export function createApp({
         summary: { income: summary.income, expense: summary.expense },
         categories,
       });
+      return true;
+    }
+
+    if (pathname === '/api/transactions/check-duplicates' && method === 'POST') {
+      requireManager(user);
+      const body = await readJson(req);
+      if (!Array.isArray(body.rows)) throw new HttpError(400, '导入数据格式不正确');
+      const results = body.rows.map((row) => {
+        if (!row || typeof row !== 'object') return { duplicate: false };
+        if (user.role === 'manager') {
+          if (!row.project_id) return { duplicate: false, error: '项目经理导入时必须指定项目' };
+          requireProjectManager(user, row.project_id);
+        }
+        const projectId = row.project_id || null;
+        const duplicate = db.prepare(
+          `SELECT id FROM transactions
+           WHERE deleted_at IS NULL
+             AND COALESCE(project_id, '') = ?
+             AND type = ? AND transaction_date = ? AND amount = ?
+             AND category = ? AND description = ?
+           LIMIT 1`
+        ).get(projectId || '', row.type, row.transaction_date, row.amount, row.category, row.description || '');
+        return { duplicate: Boolean(duplicate) };
+      });
+      sendJson(res, 200, { results });
       return true;
     }
 
@@ -1255,6 +1324,11 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       const existing = rowById('transactions', id);
+      if (existing.deleted_at) throw new HttpError(404, '收支记录不存在');
+      if (existing.project_id) {
+        const parent = rowById('projects', existing.project_id);
+        if (parent.deleted_at) throw new HttpError(404, '项目不存在');
+      }
       if (user.role === 'manager') {
         if (!existing.project_id) throw new HttpError(403, '只能管理自己负责项目的收支');
         requireProjectManager(user, existing.project_id);
@@ -1305,12 +1379,55 @@ export function createApp({
       requireManager(user);
       const id = match[1];
       const existing = rowById('transactions', id);
+      if (existing.deleted_at) throw new HttpError(404, '收支记录不存在');
+      if (existing.project_id) {
+        const parent = rowById('projects', existing.project_id);
+        if (parent.deleted_at) throw new HttpError(404, '项目不存在');
+      }
       if (user.role === 'manager') {
         if (!existing.project_id) throw new HttpError(403, '只能管理自己负责项目的收支');
         requireProjectManager(user, existing.project_id);
       }
-      db.prepare('DELETE FROM transactions WHERE id = ?').run(id);
+      const body = await readJson(req);
+      const reason = optionalString(body.delete_reason, { max: 500 }) || '';
+      db.prepare(
+        'UPDATE transactions SET deleted_at = ?, deleted_by = ?, delete_reason = ? WHERE id = ?'
+      ).run(nowISO(), user.id, reason, id);
       writeAudit(req, user, 'transaction.delete', 'transaction', id, {
+        projectId: existing.project_id, before: existing,
+        after: { deleted_at: nowISO(), delete_reason: reason },
+      });
+      sendJson(res, 200, { ok: true });
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/transactions\/([^/]+)\/restore$/);
+    if (match && method === 'POST') {
+      requireManager(user);
+      const id = match[1];
+      const existing = db.prepare('SELECT * FROM transactions WHERE id = ? AND deleted_at IS NOT NULL').get(id);
+      if (!existing) throw new HttpError(404, '回收站中不存在该收支记录');
+      if (user.role === 'manager') {
+        if (!existing.project_id) throw new HttpError(403, '只能恢复自己负责项目的收支');
+        requireProjectManager(user, existing.project_id);
+      }
+      db.prepare('UPDATE transactions SET deleted_at = NULL, deleted_by = NULL, delete_reason = \'\' WHERE id = ?').run(id);
+      const restored = rowById('transactions', id);
+      writeAudit(req, user, 'transaction.restore', 'transaction', id, {
+        projectId: existing.project_id, before: { deleted_at: existing.deleted_at, delete_reason: existing.delete_reason }, after: restored,
+      });
+      sendJson(res, 200, restored);
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/transactions\/([^/]+)\/permanent$/);
+    if (match && method === 'DELETE') {
+      requireAdmin(user);
+      const id = match[1];
+      const existing = rowById('transactions', id);
+      if (!existing.deleted_at) throw new HttpError(400, '只能永久删除回收站中的收支记录');
+      db.prepare('DELETE FROM transactions WHERE id = ?').run(id);
+      writeAudit(req, user, 'transaction.purge', 'transaction', id, {
         projectId: existing.project_id, before: existing,
       });
       sendJson(res, 200, { ok: true });
@@ -1390,7 +1507,7 @@ export function createApp({
       requireProjectManager(user, projectId);
       rowById('persons', personId);
       const existing = db.prepare(
-        'SELECT id FROM project_assignments WHERE project_id = ? AND person_id = ?'
+        'SELECT a.id FROM project_assignments a JOIN projects p ON p.id = a.project_id WHERE a.project_id = ? AND a.person_id = ? AND p.deleted_at IS NULL'
       ).get(projectId, personId);
       if (existing) throw new HttpError(400, '该人员已分配到该项目');
       const hours = requiredNumber(body.planned_hours, '计划工时', { min: 1, max: 100000 });
@@ -1430,7 +1547,7 @@ export function createApp({
       const search = (urlObj.searchParams.get('search') || '').trim();
       const projectId = urlObj.searchParams.get('project_id') || '';
       const personId = urlObj.searchParams.get('person_id') || '';
-      const filters = [];
+      const filters = ['(ts.project_id IS NULL OR EXISTS (SELECT 1 FROM projects pj WHERE pj.id = ts.project_id AND pj.deleted_at IS NULL))'];
       const params = [];
       if (user.role === 'employee') {
         if (!user.person_id) throw new HttpError(403, '当前账号未关联人员档案');
@@ -1651,6 +1768,54 @@ export function createApp({
         projectId: row.project_id, before: mapAttachment(row),
       });
       sendJson(res, 200, { ok: true });
+      return true;
+    }
+
+    if (pathname === '/api/recycle-bin' && method === 'GET') {
+      requireManager(user);
+      const urlObj = new URL(req.url, 'http://localhost');
+      const type = urlObj.searchParams.get('type') === 'transaction' ? 'transaction' : 'project';
+      const page = Math.max(1, Number.parseInt(urlObj.searchParams.get('page') || '1', 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number.parseInt(urlObj.searchParams.get('page_size') || '30', 10) || 30));
+      const params = [];
+      let filters = type === 'project' ? 'p.deleted_at IS NOT NULL' : 't.deleted_at IS NOT NULL';
+      if (user.role === 'manager') {
+        if (type === 'project') filters += ' AND p.manager_user_id = ?';
+        else filters += ' AND t.project_id IN (SELECT p.id FROM projects p WHERE p.manager_user_id = ?)';
+        params.push(user.id);
+      }
+      if (type === 'project') {
+        const total = db.prepare(`SELECT COUNT(*) AS count FROM projects p WHERE ${filters}`).get(...params).count;
+        const items = db.prepare(
+          `SELECT p.id, p.name, p.client, p.revenue, p.deleted_at, p.delete_reason,
+                  d.full_name AS deleted_by_name
+           FROM projects p LEFT JOIN users d ON d.id = p.deleted_by
+           WHERE ${filters} ORDER BY p.deleted_at DESC LIMIT ? OFFSET ?`
+        ).all(...params, pageSize, (page - 1) * pageSize);
+        sendJson(res, 200, {
+          type, total, page, page_size: pageSize,
+          items: items.map((row) => ({
+            ...row,
+            days_remaining: Math.max(0, 30 - Math.floor((Date.now() - new Date(row.deleted_at).getTime()) / 86400000)),
+          })),
+        });
+        return true;
+      }
+      const total = db.prepare(`SELECT COUNT(*) AS count FROM transactions t WHERE ${filters}`).get(...params).count;
+      const items = db.prepare(
+        `SELECT t.*, p.name AS project_name, d.full_name AS deleted_by_name
+         FROM transactions t
+         LEFT JOIN projects p ON p.id = t.project_id
+         LEFT JOIN users d ON d.id = t.deleted_by
+         WHERE ${filters} ORDER BY t.deleted_at DESC LIMIT ? OFFSET ?`
+      ).all(...params, pageSize, (page - 1) * pageSize);
+      sendJson(res, 200, {
+        type, total, page, page_size: pageSize,
+        items: items.map((row) => ({
+          ...row,
+          days_remaining: Math.max(0, 30 - Math.floor((Date.now() - new Date(row.deleted_at).getTime()) / 86400000)),
+        })),
+      });
       return true;
     }
 
