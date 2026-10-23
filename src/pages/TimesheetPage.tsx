@@ -5,9 +5,9 @@ import {
 } from '@/components/ui';
 import { formatDate, formatHours } from '@/lib/format';
 import { TIME_UNIT_HINT, TIME_UNIT_LABELS, toCanonicalHours, type TimeUnit } from '@/lib/timeUnits';
-import type { Person, Project, TimesheetEntry } from '@/types';
+import type { Person, ProjectOption, TimesheetEntry } from '@/types';
 import {
-  getPersons, getManageableProjects, getTimesheetsPage, createTimesheet, updateTimesheet, deleteTimesheet,
+  getPersons, getProjectOptions, getTimesheetsPage, createTimesheet, updateTimesheet, deleteTimesheet,
   getAssignmentsByProject,
 } from '@/lib/storage';
 import {
@@ -25,7 +25,7 @@ export default function TimesheetPage() {
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState({ hours: 0, persons: 0 });
   const [persons] = useState<Person[]>(getPersons());
-  const [projects] = useState<Project[]>(user ? getManageableProjects(user) : []);
+  const [projects] = useState<ProjectOption[]>(getProjectOptions());
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState<string>('');
   const [personFilter, setPersonFilter] = useState<string>('');
@@ -239,7 +239,7 @@ function TimesheetFormModal({
   onClose: () => void;
   entry: TimesheetEntry | null;
   persons: Person[];
-  projects: Project[];
+  projects: ProjectOption[];
   lockedPersonId: string | null;
   onSaved: () => void;
 }) {
@@ -348,7 +348,7 @@ function TimesheetImportModal({
   open: boolean;
   onClose: () => void;
   persons: Person[];
-  projects: Project[];
+  projects: ProjectOption[];
   onImported: () => void;
 }) {
   const [csvText, setCsvText] = useState('');

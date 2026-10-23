@@ -6,11 +6,11 @@ import {
 import { formatCurrency, formatCurrencyDetailed, formatDate } from '@/lib/format';
 import {
   INCOME_CATEGORIES, EXPENSE_CATEGORIES, BUDGET_CATEGORY_LABELS,
-  type BudgetCategory, type Transaction, type TransactionType, type Project,
+  type BudgetCategory, type Transaction, type TransactionType, type ProjectOption, type InvoicePlan,
 } from '@/types';
 import {
-  getTransactions, getTransactionsPage, getManageableProjects, createTransaction, updateTransaction, deleteTransaction,
-  getInvoicePlansByProject, checkTransactionDuplicates,
+  getTransactionsPage, getProjectOptions, createTransaction, updateTransaction, deleteTransaction,
+  getInvoicePlansForProject, checkTransactionDuplicates,
 } from '@/lib/storage';
 import { suggestedBudgetCategory } from '@/lib/finance';
 import {
@@ -25,7 +25,7 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
   const [summary, setSummary] = useState({ income: 0, expense: 0 });
-  const [projects, setProjects] = useState<Project[]>(user ? getManageableProjects(user) : []);
+  const [projects, setProjects] = useState<ProjectOption[]>(getProjectOptions());
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TransactionType | ''>('');
   const [projectFilter, setProjectFilter] = useState<string>('');
@@ -70,12 +70,12 @@ export default function TransactionsPage({ initialProjectId }: { initialProjectI
 
   function reload() {
     setRefreshKey((key) => key + 1);
-    setProjects(user ? getManageableProjects(user) : []);
+    setProjects(getProjectOptions());
   }
 
   const totalIncome = summary.income;
   const totalExpense = summary.expense;
-  const allCategories = [...new Set(getTransactions().map((tx) => tx.category))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  const allCategories = [...new Set([...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES])].sort((a, b) => a.localeCompare(b, 'zh-CN'));
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   function openNew() {
@@ -251,7 +251,7 @@ function TransactionFormModal({
   open: boolean;
   onClose: () => void;
   transaction: Transaction | null;
-  projects: Project[];
+  projects: ProjectOption[];
   userId: string | null;
   presetProjectId: string | null;
   onSaved: () => void;
@@ -268,10 +268,22 @@ function TransactionFormModal({
   const [invoicePlanId, setInvoicePlanId] = useState(transaction?.invoice_plan_id || '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [projectPlans, setProjectPlans] = useState<InvoicePlan[]>([]);
 
   const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
   const selectedProject = projects.find((project) => project.id === projectId) || null;
-  const projectPlans = projectId ? getInvoicePlansByProject(projectId) : [];
+
+  useEffect(() => {
+    let active = true;
+    if (!open || !projectId) {
+      setProjectPlans([]);
+      return;
+    }
+    getInvoicePlansForProject(projectId)
+      .then((plans) => { if (active) setProjectPlans(plans); })
+      .catch(() => { if (active) setProjectPlans([]); });
+    return () => { active = false; };
+  }, [open, projectId]);
   const currentPlanMissing = Boolean(
     invoicePlanId && !projectPlans.some((plan) => plan.id === invoicePlanId),
   );
@@ -402,7 +414,7 @@ function TransactionImportModal({
 }: {
   open: boolean;
   onClose: () => void;
-  projects: Project[];
+  projects: ProjectOption[];
   userId: string | null;
   onImported: () => void;
 }) {

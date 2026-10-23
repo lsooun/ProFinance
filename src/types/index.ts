@@ -153,6 +153,7 @@ export interface PaginatedProjects {
     income: number;
     expense: number;
     status_counts: Partial<Record<ProjectStatus, number>>;
+    my_hours?: number;
   };
 }
 
@@ -228,6 +229,8 @@ export interface Project {
   aggregate_planned_hours?: number;
   aggregate_month_income?: number;
   aggregate_month_expense?: number;
+  my_planned_hours?: number;
+  my_hours?: number;
   created_at: string;
   updated_at: string;
 }
@@ -458,6 +461,7 @@ export interface ProjectOption {
   category: ProjectCategory | null;
   manager_user_id: string | null;
   client: string;
+  revenue: number;
   start_date: string | null;
   end_date: string | null;
 }

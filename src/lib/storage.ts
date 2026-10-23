@@ -555,6 +555,10 @@ export async function restoreCostSheetVersion(projectId: string, version: number
   return result;
 }
 
+export async function getInvoicePlansForProject(projectId: string): Promise<InvoicePlan[]> {
+  return apiRequest<InvoicePlan[]>(`/api/projects/${encodeURIComponent(projectId)}/invoice-plans`);
+}
+
 export async function getProjectDetail(projectId: string): Promise<ProjectDetailData> {
   return apiRequest<ProjectDetailData>(`/api/projects/${encodeURIComponent(projectId)}/detail`);
 }

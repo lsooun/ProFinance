@@ -379,7 +379,7 @@ export function createApp({
   function buildBootstrap(user, { light = false } = {}) {
     const allPersons = db.prepare('SELECT * FROM persons ORDER BY name COLLATE NOCASE').all().map(mapPerson);
     const projectOptions = db.prepare(
-      `SELECT id, name, status, category, manager_user_id, client, start_date, end_date
+      `SELECT id, name, status, category, manager_user_id, client, revenue, start_date, end_date
        FROM projects WHERE deleted_at IS NULL ORDER BY created_at DESC`
     ).all();
     if (light) {
@@ -413,8 +413,12 @@ export function createApp({
       const users = user.role === 'admin'
         ? db.prepare('SELECT id, email, full_name, role, is_active, person_id, created_at FROM users ORDER BY created_at ASC').all().map(publicUser)
         : [];
+      let assignments = db.prepare('SELECT * FROM project_assignments').all().filter((row) => visibleProjectOptions.some((project) => project.id === row.project_id));
+      if (user.role === 'employee') {
+        assignments = assignments.filter((row) => row.person_id === user.person_id);
+      }
       return {
-        user, projects: [], assignments: [], timesheets: [], transactions: [], invoicePlans: [], attachments: [],
+        user, projects: [], assignments, timesheets: [], transactions: [], invoicePlans: [], attachments: [],
         persons: visiblePersons, users, managerOptions, projectOptions: visibleProjectOptions, permissions,
       };
     }
@@ -1138,9 +1142,26 @@ export function createApp({
       const items = db.prepare(
         `${PROJECT_SELECT} ${where} ORDER BY p.created_at DESC LIMIT ? OFFSET ?`
       ).all(...params, pageSize, (page - 1) * pageSize).map(mapProject);
+      let myHours = 0;
+      if (user.role === 'employee' && user.person_id) {
+        for (const project of items) {
+          const assignment = db.prepare(
+            'SELECT planned_hours FROM project_assignments WHERE project_id = ? AND person_id = ?'
+          ).get(project.id, user.person_id);
+          const hours = db.prepare(
+            'SELECT COALESCE(SUM(hours), 0) AS hours FROM timesheets WHERE project_id = ? AND person_id = ?'
+          ).get(project.id, user.person_id).hours;
+          project.my_planned_hours = assignment?.planned_hours ?? 0;
+          project.my_hours = hours;
+          myHours += hours;
+        }
+      }
       sendJson(res, 200, {
         items, total, page, page_size: pageSize,
-        summary: { contract: summary.contract, income: summary.income, expense: summary.expense, status_counts: statusCounts },
+        summary: {
+          contract: summary.contract, income: summary.income, expense: summary.expense,
+          status_counts: statusCounts, my_hours: myHours,
+        },
       });
       return true;
     }
@@ -1174,6 +1195,16 @@ export function createApp({
         });
       }
       sendJson(res, 201, createdProject);
+      return true;
+    }
+
+    match = pathname.match(/^\/api\/projects\/([^/]+)\/invoice-plans$/);
+    if (match && method === 'GET') {
+      const projectId = match[1];
+      rowById('projects', projectId);
+      requireProjectManager(user, projectId);
+      const plans = db.prepare('SELECT * FROM invoice_plans WHERE project_id = ? ORDER BY date ASC').all(projectId);
+      sendJson(res, 200, plans);
       return true;
     }
 

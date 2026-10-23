@@ -17,9 +17,7 @@ import {
 } from '@/types';
 import {
   getProjectsPage, createProject, updateProject, deleteProject,
-  getProjectActualHours, getProjectPlannedHours,
-  getManagerOptions, getTimesheets,
-  getAssignmentsByProject, getTimesheetsByProject,
+  getManagerOptions,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
 import {
@@ -36,7 +34,8 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
   const [summary, setSummary] = useState<{
     contract: number; income: number; expense: number;
     status_counts: Partial<Record<ProjectStatus, number>>;
-  }>({ contract: 0, income: 0, expense: 0, status_counts: {} });
+    my_hours?: number;
+  }>({ contract: 0, income: 0, expense: 0, status_counts: {}, my_hours: 0 });
   const managerOptions = getManagerOptions();
   const canManage = user?.role === 'admin' || user?.role === 'manager';
   const [search, setSearch] = useState('');
@@ -86,9 +85,7 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
   const totalActualIncome = summary.income;
   const totalActualProfit = summary.income - summary.expense;
   const myActiveProjects = summary.status_counts.in_progress ?? 0;
-  const myTotalHours = getTimesheets()
-    .filter((entry) => entry.person_id === user?.person_id)
-    .reduce((sum, entry) => sum + entry.hours, 0);
+  const myTotalHours = summary.my_hours ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   function toggleStatus(status: ProjectStatus) {
@@ -233,19 +230,10 @@ export default function ProjectsPage({ onOpenProject }: { onOpenProject: (id: st
             const plannedMargin = financials.plannedMargin;
             const canEditProject = user?.role === 'admin'
               || (user?.role === 'manager' && project.manager_user_id === user.id);
-            const plannedHours = user?.role === 'manager'
-              ? (project.aggregate_planned_hours ?? 0)
-              : getProjectPlannedHours(project.id);
-            const actualHours = user?.role === 'manager'
-              ? (project.aggregate_hours ?? 0)
-              : getProjectActualHours(project.id);
-            const myAssignment = getAssignmentsByProject(project.id).find(
-              (assignment) => assignment.person_id === user?.person_id,
-            );
-            const myPlannedHours = myAssignment?.planned_hours ?? 0;
-            const myActualHours = getTimesheetsByProject(project.id)
-              .filter((entry) => entry.person_id === user?.person_id)
-              .reduce((sum, entry) => sum + entry.hours, 0);
+            const plannedHours = project.aggregate_planned_hours ?? 0;
+            const actualHours = project.aggregate_hours ?? 0;
+            const myPlannedHours = project.my_planned_hours ?? 0;
+            const myActualHours = project.my_hours ?? 0;
             return (
               <Card key={project.id} className="p-5 hover:shadow-md transition-shadow cursor-pointer group">
                 <div onClick={() => onOpenProject(project.id)}>
