@@ -483,7 +483,6 @@ export default function ProjectDetailPage({
                 icon={<FileText className="w-6 h-6" />}
                 title="暂无回款计划"
                 description="按阶段设置回款日期、节点和比例，金额按合同收入自动计算。"
-                action={canAddInvoice ? <Button size="sm" onClick={openNewInvoice}><Plus className="w-4 h-4" /> 新增回款节点</Button> : undefined}
               />
             ) : (
               <div className="space-y-3">
@@ -696,7 +695,6 @@ export default function ProjectDetailPage({
             icon={<Users className="w-6 h-6" />}
             title="暂无项目成员"
             description="分配团队成员并设置计划工时。"
-            action={canManage ? <Button size="sm" onClick={openNewAssignment}><Plus className="w-4 h-4" /> 分配成员</Button> : undefined}
           />
         ) : (
           <div className="space-y-2">
@@ -929,7 +927,6 @@ export default function ProjectDetailPage({
                 icon={<DollarSign className="w-6 h-6" />}
                 title="暂无关联收支"
                 description="为该项目的回款与付款记账，现金净额会自动更新。"
-                action={<Button size="sm" onClick={() => onAddTransaction?.(project.id)}><Plus className="w-4 h-4" /> 新增收支</Button>}
               />
             ) : (
               <div className="overflow-x-auto">

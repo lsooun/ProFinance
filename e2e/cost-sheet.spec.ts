@@ -35,6 +35,9 @@ test('Cost Sheet 创建版本、展示历史和恢复版本', async ({ page }) =
     await page.goto(`/#/projects/${project.id}`);
     await expect(page.getByText('Cost Sheet 分析')).toBeVisible();
     await expect(page.getByText('关键文档完整性')).toBeVisible();
+    await expect(page.getByRole('button', { name: '分配成员' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '新增收支' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '新增回款节点' })).toHaveCount(1);
     await expect(page.getByText('当前版本 v1 · 基线 v1')).toBeVisible();
 
     const updated = await page.request.patch(`/api/projects/${project.id}`, {
