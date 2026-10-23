@@ -112,6 +112,26 @@ export interface CostSheetVersionSummary {
   approved_by_name: string | null;
 }
 
+export interface DashboardData {
+  projects: Project[];
+  transactions: Transaction[];
+  timesheets: TimesheetEntry[];
+  recentProjects: Project[];
+  recentTransactions: Transaction[];
+  recentTimesheets: TimesheetEntry[];
+  summary: {
+    totalIncome: number;
+    totalExpense: number;
+    totalBudget: number;
+    monthIncome: number;
+    monthExpense: number;
+    activeProjectCount: number;
+    statusCounts: Record<ProjectStatus, number>;
+    monthHours: number;
+    totalHours: number;
+  };
+}
+
 export interface PaginatedProjects {
   items: Project[];
   total: number;
@@ -419,6 +439,17 @@ export const USER_ROLE_LABELS: Record<UserRole, string> = {
   manager: '项目经理',
   employee: '普通员工',
 };
+
+export interface ProjectOption {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  category: ProjectCategory | null;
+  manager_user_id: string | null;
+  client: string;
+  start_date: string | null;
+  end_date: string | null;
+}
 
 export interface BootstrapData {
   user: UserAccount;

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AuthProvider } from '@/context/AuthContext';
 import { useAuth } from '@/context/auth-context';
 import LoginPage from '@/pages/LoginPage';
@@ -16,13 +16,37 @@ import ResetPasswordPage from '@/pages/ResetPasswordPage';
 import AuditLogsPage from '@/pages/AuditLogsPage';
 import RecycleBinPage from '@/pages/RecycleBinPage';
 import { getResetTokenFromHash, pathFor, useHashRoute } from '@/lib/router';
+import { loadPageData } from '@/lib/storage';
 
 function AppContent() {
   const { user, profile, signOut, loading } = useAuth();
   const { route, navigate } = useHashRoute();
   const resetToken = getResetTokenFromHash(window.location.hash);
+  const [pageDataLoading, setPageDataLoading] = useState(true);
+  const [pageDataError, setPageDataError] = useState<string | null>(null);
+  const [pageDataRetry, setPageDataRetry] = useState(0);
 
   const isManagerUp = profile?.role === 'admin' || profile?.role === 'manager';
+
+  useEffect(() => {
+    if (!profile) return;
+    if (route.page === 'dashboard') {
+      setPageDataLoading(false);
+      setPageDataError(null);
+      return;
+    }
+    let active = true;
+    setPageDataLoading(true);
+    setPageDataError(null);
+    loadPageData()
+      .then(() => { if (active) setPageDataLoading(false); })
+      .catch(() => {
+        if (!active) return;
+        setPageDataError('业务数据加载失败，请稍后重试。');
+        setPageDataLoading(false);
+      });
+    return () => { active = false; };
+  }, [route.page, route.projectId, profile, pageDataRetry]);
 
   useEffect(() => {
     if (!profile) return;
@@ -70,6 +94,28 @@ function AppContent() {
           >
             返回登录
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (pageDataLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-slate-300 border-t-blue-600 rounded-full animate-spin" />
+          <p className="text-sm text-slate-500">正在加载页面数据…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (pageDataError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-8">
+        <div className="text-center">
+          <p className="text-sm text-rose-700">{pageDataError}</p>
+          <button onClick={() => setPageDataRetry((value) => value + 1)} className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">重试</button>
         </div>
       </div>
     );

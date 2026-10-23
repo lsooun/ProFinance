@@ -1,18 +1,15 @@
+import { useEffect, useState } from 'react';
 import { Card, StatCard, Badge, EmptyState, Button } from '@/components/ui';
-import { formatCurrency, formatCurrencyDetailed, formatDate, calculateBudgetTotal, formatHours } from '@/lib/format';
-import { projectFinancials, transactionsForProject, sumTransactions, isSameMonth } from '@/lib/finance';
+import { formatCurrency, formatCurrencyDetailed, formatDate, formatHours } from '@/lib/format';
+import { projectFinancialsFromAggregates } from '@/lib/finance';
 import {
   STATUS_LABELS,
   STATUS_COLORS,
   STATUS_DOT_COLORS,
   type Project,
 } from '@/types';
-import {
-  getProjects,
-  getTransactions,
-  getPersons,
-  getTimesheets,
-} from '@/lib/storage';
+import { getDashboardData, getPersons } from '@/lib/storage';
+import type { DashboardData } from '@/types';
 import { useAuth } from '@/context/auth-context';
 import {
   DollarSign,
@@ -31,55 +28,42 @@ import type { PageKey } from '@/lib/router';
 
 export default function DashboardPage({ onNavigate }: { onNavigate: (page: PageKey) => void }) {
   const { profile } = useAuth();
-  const projects = getProjects();
-  const transactions = getTransactions();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const persons = getPersons();
-  const now = new Date();
   const isEmployee = profile?.role === 'employee';
   const isManager = profile?.role === 'manager';
 
-  const currentPerson = persons.find((person) => person.id === profile?.person_id) ?? null;
-  const myTimesheets = getTimesheets();
-  const monthHours = myTimesheets
-    .filter((entry) => isSameMonth(entry.date, now))
-    .reduce((sum, entry) => sum + entry.hours, 0);
-  const totalMyHours = myTimesheets.reduce((sum, entry) => sum + entry.hours, 0);
-  const activeProjectCount = projects.filter((project) => project.status === 'in_progress').length;
+  useEffect(() => {
+    let active = true;
+    getDashboardData()
+      .then((result) => { if (active) setData(result); })
+      .catch(() => { if (active) setError('仪表盘加载失败，请稍后重试。'); });
+    return () => { active = false; };
+  }, []);
 
-  const totalIncome = isManager
-    ? projects.reduce((sum, project) => sum + (project.aggregate_income ?? 0), 0)
-    : sumTransactions(transactions, 'income');
-  const totalExpense = isManager
-    ? projects.reduce((sum, project) => sum + (project.aggregate_expense ?? 0), 0)
-    : sumTransactions(transactions, 'expense');
+  if (error) {
+    return <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>;
+  }
+  if (!data) {
+    return <div className="py-24 text-center text-sm text-slate-500">正在加载仪表盘…</div>;
+  }
+
+  const { projects, recentProjects, recentTransactions, recentTimesheets, summary } = data;
+  const currentPerson = persons.find((person) => person.id === profile?.person_id) ?? null;
+  const monthHours = summary.monthHours;
+  const totalMyHours = summary.totalHours;
+  const activeProjectCount = summary.activeProjectCount;
+  const totalIncome = summary.totalIncome;
+  const totalExpense = summary.totalExpense;
   const totalProfit = totalIncome - totalExpense;
-  const totalBudget = projects.reduce(
-    (sum, project) => sum + calculateBudgetTotal(project.budget_labor, project.budget_travel, project.budget_other),
-    0,
-  );
-  const monthIncome = isManager
-    ? projects.reduce((sum, project) => sum + (project.aggregate_month_income ?? 0), 0)
-    : transactions
-      .filter((tx) => tx.type === 'income' && isSameMonth(tx.transaction_date, now))
-      .reduce((sum, tx) => sum + tx.amount, 0);
-  const monthExpense = isManager
-    ? projects.reduce((sum, project) => sum + (project.aggregate_month_expense ?? 0), 0)
-    : transactions
-      .filter((tx) => tx.type === 'expense' && isSameMonth(tx.transaction_date, now))
-      .reduce((sum, tx) => sum + tx.amount, 0);
-  const statusCounts = {
-    presales: projects.filter((project) => project.status === 'presales').length,
-    in_progress: projects.filter((project) => project.status === 'in_progress').length,
-    completed: projects.filter((project) => project.status === 'completed').length,
-    cancelled: projects.filter((project) => project.status === 'cancelled').length,
-  };
-  const recentProjects = projects.slice(0, 5);
-  const recentTransactions = transactions.slice(0, 10);
-  const recentTimesheets = myTimesheets.slice(0, 8);
+  const totalBudget = summary.totalBudget;
+  const monthIncome = summary.monthIncome;
+  const monthExpense = summary.monthExpense;
+  const statusCounts = summary.statusCounts;
 
   function projectProfit(project: Project): number {
-    if (isManager) return (project.aggregate_income ?? 0) - (project.aggregate_expense ?? 0);
-    return projectFinancials(project, transactionsForProject(transactions, project.id)).actualProfit;
+    return projectFinancialsFromAggregates(project).actualProfit;
   }
 
   if (isEmployee) {

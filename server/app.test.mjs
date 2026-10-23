@@ -87,7 +87,7 @@ test('登录失败返回 401，登录成功返回会话', async () => {
   assert.equal(typeof bad.data.error, 'string');
   assert.equal(bad.cookie, null);
 
-  const bootstrap = await api('/api/bootstrap', { cookie: adminCookie });
+  const bootstrap = await api('/api/page-data', { cookie: adminCookie });
   assert.equal(bootstrap.status, 200);
   assert.equal(bootstrap.data.user.role, 'admin');
   assert.equal(bootstrap.data.projects.length, 3);
@@ -102,7 +102,7 @@ test('登录失败返回 401，登录成功返回会话', async () => {
 });
 
 test('员工只能拿到被分配项目与自己的工时', async () => {
-  const result = await api('/api/bootstrap', { cookie: employeeCookie });
+  const result = await api('/api/page-data', { cookie: employeeCookie });
   assert.equal(result.status, 200);
   assert.equal(result.data.user.role, 'employee');
   assert.equal(result.data.projects.length, 1);
@@ -153,9 +153,9 @@ test('员工不能创建项目、不能访问管理员用户接口', async () =>
 });
 
 test('员工只能填报自己的工时，且项目必须已分配', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: employeeCookie });
+  const bootstrap = await api('/api/page-data', { cookie: employeeCookie });
   const { user, projects } = bootstrap.data;
-  const managerBootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const managerBootstrap = await api('/api/page-data', { cookie: managerCookie });
   const unassignedProject = managerBootstrap.data.projects.find(
     (project) => !projects.some((assigned) => assigned.id === project.id),
   );
@@ -210,7 +210,7 @@ test('员工只能填报自己的工时，且项目必须已分配', async () =>
 });
 
 test('项目经理可以创建项目并查看全部数据，但不能管理用户', async () => {
-  const before = await api('/api/bootstrap', { cookie: managerCookie });
+  const before = await api('/api/page-data', { cookie: managerCookie });
   const managerUserId = before.data.user.id;
   const created = await api('/api/projects', {
     method: 'POST',
@@ -236,7 +236,7 @@ test('项目经理可以创建项目并查看全部数据，但不能管理用�
   assert.equal(created.data.manager_name, '张伟');
   assert.equal(created.data.category, 'custom_development');
 
-  const after = await api('/api/bootstrap', { cookie: managerCookie });
+  const after = await api('/api/page-data', { cookie: managerCookie });
   assert.equal(after.data.projects.length, before.data.projects.length + 1);
   assert.equal(after.data.users.length, 0);
 
@@ -278,7 +278,7 @@ test('新建项目必须选择合法分类，分类可以修改', async () => {
 });
 
 test('项目经理只能是角色为 manager 的真实用户', async () => {
-  const admin = await api('/api/bootstrap', { cookie: adminCookie });
+  const admin = await api('/api/page-data', { cookie: adminCookie });
   const employee = admin.data.users.find((user) => user.role === 'employee');
   const adminUser = admin.data.users.find((user) => user.role === 'admin');
 
@@ -307,7 +307,7 @@ test('项目经理只能是角色为 manager 的真实用户', async () => {
 });
 
 test('项目经理可以修改成员计划工时，员工不能', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const bootstrap = await api('/api/page-data', { cookie: managerCookie });
   const assignment = bootstrap.data.assignments[0];
 
   const updated = await api(`/api/assignments/${assignment.id}`, {
@@ -333,7 +333,7 @@ test('项目经理可以修改成员计划工时，员工不能', async () => {
 });
 
 test('回款节点可以编辑日期、节点和比例', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const bootstrap = await api('/api/page-data', { cookie: managerCookie });
   const plan = bootstrap.data.invoicePlans.find((item) => item.percentage === 40);
   assert.ok(plan);
 
@@ -408,13 +408,13 @@ test('用户可以修改自己的资料，管理员可生成一次性重置链�
     cookie: adminCookie,
   });
   assert.equal(removed.status, 200);
-  const personAfter = (await api('/api/bootstrap', { cookie: adminCookie })).data.persons.find((item) => item.id === person.id);
+  const personAfter = (await api('/api/page-data', { cookie: adminCookie })).data.persons.find((item) => item.id === person.id);
   assert.equal(personAfter.name, '资料测试改名');
   await api(`/api/persons/${person.id}`, { method: 'DELETE', cookie: adminCookie });
 });
 
 test('收支支持预算分类和回款节点关联校验', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const bootstrap = await api('/api/page-data', { cookie: managerCookie });
   const project = bootstrap.data.projects[0];
   const plan = bootstrap.data.invoicePlans.find((item) => item.project_id === project.id);
   assert.ok(plan);
@@ -490,7 +490,7 @@ test('收支支持预算分类和回款节点关联校验', async () => {
 });
 
 test('项目经理只能查看自己负责项目的明细，但能看到全部项目统计', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const bootstrap = await api('/api/page-data', { cookie: managerCookie });
   const managerId = bootstrap.data.user.id;
   assert.equal(bootstrap.data.projects.length, 3);
   const ownedIds = new Set(
@@ -536,7 +536,7 @@ test('项目经理只能查看自己负责项目的明细，但能看到全部�
 });
 
 test('工时支持天/周/月/年单位并统一折算为小时存储', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const bootstrap = await api('/api/page-data', { cookie: managerCookie });
   const project = bootstrap.data.projects.find((item) => item.manager_user_id === bootstrap.data.user.id);
   const assignment = bootstrap.data.assignments.find((item) => item.project_id === project.id);
   assert.ok(project && assignment);
@@ -640,7 +640,7 @@ test('项目经理和员工账号必须关联唯一人员档案', async () => {
     body: { name: '唯一账号改名' },
   });
   assert.equal(renamed.status, 200);
-  const users = (await api('/api/bootstrap', { cookie: adminCookie })).data.users;
+  const users = (await api('/api/page-data', { cookie: adminCookie })).data.users;
   assert.equal(users.find((u) => u.id === created.data.user.id).full_name, '唯一账号改名');
 
   await api(`/api/users/${created.data.user.id}`, { method: 'DELETE', cookie: adminCookie });
@@ -831,7 +831,7 @@ test('管理员账号可以不关联人员档案', async () => {
 });
 
 test('最后一名管理员不能被降级、停用或删除', async () => {
-  const me = (await api('/api/bootstrap', { cookie: adminCookie })).data.user;
+  const me = (await api('/api/page-data', { cookie: adminCookie })).data.user;
 
   const demote = await api(`/api/users/${me.id}`, {
     method: 'PATCH',
@@ -871,7 +871,7 @@ test('管理员可以新增用户、重置密码，密码修改生效', async ()
   });
   assert.equal(created.status, 201);
 
-  const optionsAfterCreate = await api('/api/bootstrap', { cookie: adminCookie });
+  const optionsAfterCreate = await api('/api/page-data', { cookie: adminCookie });
   assert.ok(optionsAfterCreate.data.managerOptions.some((option) => option.full_name === '测试用户'));
 
   const duplicate = await api('/api/users', {
@@ -882,7 +882,7 @@ test('管理员可以新增用户、重置密码，密码修改生效', async ()
   assert.equal(duplicate.status, 400);
 
   const userCookie = await login(email);
-  const bootstrap = await api('/api/bootstrap', { cookie: userCookie });
+  const bootstrap = await api('/api/page-data', { cookie: userCookie });
   assert.equal(bootstrap.data.user.email, email);
 
   const wrongCurrent = await api('/api/auth/password', {
@@ -930,13 +930,13 @@ test('管理员可以新增用户、重置密码，密码修改生效', async ()
   });
   assert.equal(removed.status, 200);
 
-  const optionsAfterDelete = await api('/api/bootstrap', { cookie: adminCookie });
+  const optionsAfterDelete = await api('/api/page-data', { cookie: adminCookie });
   assert.ok(!optionsAfterDelete.data.managerOptions.some((option) => option.full_name === '测试用户'));
   await api(`/api/persons/${person.id}`, { method: 'DELETE', cookie: adminCookie });
 });
 
 test('附件上传、下载、删除走服务端存储', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const bootstrap = await api('/api/page-data', { cookie: managerCookie });
   const project = bootstrap.data.projects[0];
   const base64 = Buffer.from('fake-xlsx-content').toString('base64');
 
@@ -983,12 +983,12 @@ test('附件上传、下载、删除走服务端存储', async () => {
 });
 
 test('受保护资源需要登录', async () => {
-  const result = await api('/api/bootstrap');
+  const result = await api('/api/page-data');
   assert.equal(result.status, 401);
 });
 
 test('回款比例合计不能超过 100%', async () => {
-  const bootstrap = await api('/api/bootstrap', { cookie: managerCookie });
+  const bootstrap = await api('/api/page-data', { cookie: managerCookie });
   const project = bootstrap.data.projects.find((item) => item.name === '企业官网改版');
   const result = await api('/api/invoices', {
     method: 'POST',
@@ -1038,7 +1038,7 @@ test('收支和工时列表支持服务端分页', async () => {
 
   const employeeTransactions = await api('/api/transactions?page=1', { cookie: employeeCookie });
   assert.equal(employeeTransactions.status, 403);
-  const employeeBootstrap = await api('/api/bootstrap', { cookie: employeeCookie });
+  const employeeBootstrap = await api('/api/page-data', { cookie: employeeCookie });
   const employeePersonId = employeeBootstrap.data.user.person_id;
   const employeeTimesheets = await api('/api/timesheets?page=1&page_size=100', { cookie: employeeCookie });
   assert.equal(employeeTimesheets.status, 200);
@@ -1060,4 +1060,19 @@ test('项目列表支持服务端分页和筛选', async () => {
   const employee = await api('/api/projects?page_size=100', { cookie: employeeCookie });
   assert.equal(employee.status, 200);
   assert.ok(employee.data.items.every((project) => project.id));
+});
+
+test('轻量 bootstrap 不携带业务数据，按需页面接口才加载', async () => {
+  const light = await api('/api/bootstrap', { cookie: adminCookie });
+  assert.equal(light.status, 200);
+  assert.equal(light.data.projects.length, 0);
+  assert.equal(light.data.transactions.length, 0);
+  assert.equal(light.data.timesheets.length, 0);
+  assert.equal(light.data.attachments.length, 0);
+  assert.ok(light.data.projectOptions.length >= 1);
+
+  const full = await api('/api/page-data', { cookie: adminCookie });
+  assert.equal(full.status, 200);
+  assert.ok(full.data.projects.length >= 1);
+  assert.ok(full.data.persons.length >= 1);
 });

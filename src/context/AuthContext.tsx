@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { UserAccount } from '@/types';
 import { apiRequest, errorMessage } from '@/lib/api';
-import { clearCache, loadBootstrap, updateOwnProfile } from '@/lib/storage';
+import { clearCache, loadBootstrap, loadPageData, updateOwnProfile } from '@/lib/storage';
 import { notify } from '@/lib/notify';
 import { AuthContext } from '@/context/auth-context';
 
@@ -60,7 +60,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     try {
-      const data = await loadBootstrap();
+      await loadBootstrap();
+      const data = await loadPageData();
       setUser(data.user);
     } catch (error) {
       notify(errorMessage(error, '刷新用户信息失败'), 'error');

@@ -376,8 +376,48 @@ export function createApp({
     if (!assignment) throw new HttpError(403, '无权访问该项目');
   }
 
-  function buildBootstrap(user) {
+  function buildBootstrap(user, { light = false } = {}) {
     const allPersons = db.prepare('SELECT * FROM persons ORDER BY name COLLATE NOCASE').all().map(mapPerson);
+    const projectOptions = db.prepare(
+      `SELECT id, name, status, category, manager_user_id, client, start_date, end_date
+       FROM projects WHERE deleted_at IS NULL ORDER BY created_at DESC`
+    ).all();
+    if (light) {
+      const managerOptions = db.prepare(
+        `SELECT id, full_name, role FROM users
+         WHERE role = 'manager' AND is_active = 1 ORDER BY full_name COLLATE NOCASE`
+      ).all();
+      const permissions = user.role === 'admin'
+        ? { canManage: true, isAdmin: true, canViewAllProjectStats: true }
+        : user.role === 'manager'
+          ? { canManage: true, isAdmin: false, canViewAllProjectStats: true }
+          : { canManage: false, isAdmin: false, canViewAllProjectStats: false };
+      let visiblePersons = allPersons;
+      let visibleProjectOptions = projectOptions;
+      if (user.role === 'employee') {
+        if (!user.person_id) {
+          visiblePersons = [];
+          visibleProjectOptions = [];
+        } else {
+          const ids = db.prepare('SELECT project_id FROM project_assignments WHERE person_id = ?').all(user.person_id).map((row) => row.project_id);
+          const allowed = new Set(ids);
+          visibleProjectOptions = projectOptions.filter((project) => allowed.has(project.id));
+          const personIds = new Set(
+            db.prepare(`SELECT person_id FROM project_assignments WHERE project_id IN (${ids.map(() => '?').join(',') || 'NULL'})`)
+              .all(...ids).map((row) => row.person_id)
+          );
+          personIds.add(user.person_id);
+          visiblePersons = allPersons.filter((person) => personIds.has(person.id)).map((person) => ({ ...person, email: '', phone: '' }));
+        }
+      }
+      const users = user.role === 'admin'
+        ? db.prepare('SELECT id, email, full_name, role, is_active, person_id, created_at FROM users ORDER BY created_at ASC').all().map(publicUser)
+        : [];
+      return {
+        user, projects: [], assignments: [], timesheets: [], transactions: [], invoicePlans: [], attachments: [],
+        persons: visiblePersons, users, managerOptions, projectOptions: visibleProjectOptions, permissions,
+      };
+    }
     const allProjects = db.prepare(`${PROJECT_SELECT} WHERE p.deleted_at IS NULL ORDER BY p.created_at DESC`).all().map(mapProject);
     const activeProjectIds = new Set(allProjects.map((project) => project.id));
     const allAssignments = db.prepare('SELECT * FROM project_assignments').all().filter((row) => activeProjectIds.has(row.project_id));
@@ -449,6 +489,7 @@ export function createApp({
         attachments: allAttachments.filter((a) => ownedProjectIds.has(a.project_id)),
         users: [],
         managerOptions,
+        projectOptions,
         permissions: { canManage: true, isAdmin: false, canViewAllProjectStats: true },
       };
     }
@@ -468,6 +509,7 @@ export function createApp({
       attachments: allAttachments,
       users,
       managerOptions,
+      projectOptions,
       permissions: { canManage: true, isAdmin: true, canViewAllProjectStats: true },
     };
   }
@@ -766,7 +808,7 @@ export function createApp({
     }
 
     if (pathname === '/api/bootstrap' && method === 'GET') {
-      sendJson(res, 200, buildBootstrap(user));
+      sendJson(res, 200, buildBootstrap(user, { light: true }));
       return true;
     }
 
@@ -814,6 +856,87 @@ export function createApp({
         page,
         page_size: pageSize,
       });
+      return true;
+    }
+
+    if (pathname === '/api/dashboard' && method === 'GET') {
+      const filters = ['p.deleted_at IS NULL'];
+      const params = [];
+      if (user.role === 'employee') {
+        if (!user.person_id) {
+          sendJson(res, 200, {
+            projects: [], transactions: [], timesheets: [],
+            recentProjects: [], recentTransactions: [], recentTimesheets: [],
+            summary: {
+              totalIncome: 0, totalExpense: 0, totalBudget: 0, monthIncome: 0, monthExpense: 0,
+              activeProjectCount: 0, statusCounts: { presales: 0, in_progress: 0, completed: 0, cancelled: 0 },
+              monthHours: 0, totalHours: 0,
+            },
+          });
+          return true;
+        }
+        filters.push('EXISTS (SELECT 1 FROM project_assignments pa WHERE pa.project_id = p.id AND pa.person_id = ?)');
+        params.push(user.person_id);
+      }
+      const projects = db.prepare(`${PROJECT_SELECT} WHERE ${filters.join(' AND ')} ORDER BY p.created_at DESC`).all(...params).map(mapProject);
+      const txFilters = ['t.deleted_at IS NULL', '(t.project_id IS NULL OR EXISTS (SELECT 1 FROM projects pj WHERE pj.id = t.project_id AND pj.deleted_at IS NULL))'];
+      const txParams = [];
+      if (user.role === 'manager') {
+        txFilters.push('t.project_id IN (SELECT p.id FROM projects p WHERE p.manager_user_id = ?)');
+        txParams.push(user.id);
+      } else if (user.role === 'employee') {
+        txFilters.push('1 = 0');
+      }
+      const transactions = user.role === 'employee' ? [] : db.prepare(
+        `SELECT t.* FROM transactions t WHERE ${txFilters.join(' AND ')} ORDER BY t.transaction_date DESC, t.created_at DESC`
+      ).all(...txParams);
+      const tsFilters = ['(ts.project_id IS NULL OR EXISTS (SELECT 1 FROM projects pj WHERE pj.id = ts.project_id AND pj.deleted_at IS NULL))'];
+      const tsParams = [];
+      if (user.role === 'employee') {
+        if (!user.person_id) tsFilters.push('1 = 0');
+        else { tsFilters.push('ts.person_id = ?'); tsParams.push(user.person_id); }
+      } else if (user.role === 'manager') {
+        tsFilters.push('ts.project_id IN (SELECT p.id FROM projects p WHERE p.manager_user_id = ?)');
+        tsParams.push(user.id);
+      }
+      const timesheets = db.prepare(
+        `SELECT ts.* FROM timesheets ts WHERE ${tsFilters.join(' AND ')} ORDER BY ts.date DESC`
+      ).all(...tsParams);
+      const nowMonth = new Date().toISOString().slice(0, 7);
+      const totalIncome = user.role === 'manager'
+        ? projects.reduce((sum, project) => sum + (project.aggregate_income ?? 0), 0)
+        : transactions.filter((tx) => tx.type === 'income').reduce((sum, tx) => sum + tx.amount, 0);
+      const totalExpense = user.role === 'manager'
+        ? projects.reduce((sum, project) => sum + (project.aggregate_expense ?? 0), 0)
+        : transactions.filter((tx) => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
+      const monthIncome = user.role === 'manager'
+        ? projects.reduce((sum, project) => sum + (project.aggregate_month_income ?? 0), 0)
+        : transactions.filter((tx) => tx.type === 'income' && tx.transaction_date.slice(0, 7) === nowMonth).reduce((sum, tx) => sum + tx.amount, 0);
+      const monthExpense = user.role === 'manager'
+        ? projects.reduce((sum, project) => sum + (project.aggregate_month_expense ?? 0), 0)
+        : transactions.filter((tx) => tx.type === 'expense' && tx.transaction_date.slice(0, 7) === nowMonth).reduce((sum, tx) => sum + tx.amount, 0);
+      const statusCounts = { presales: 0, in_progress: 0, completed: 0, cancelled: 0 };
+      projects.forEach((project) => { statusCounts[project.status] = (statusCounts[project.status] || 0) + 1; });
+      sendJson(res, 200, {
+        projects,
+        transactions,
+        timesheets,
+        recentProjects: projects.slice(0, 5),
+        recentTransactions: transactions.slice(0, 10),
+        recentTimesheets: timesheets.slice(0, 8),
+        summary: {
+          totalIncome, totalExpense, totalBudget: projects.reduce((sum, project) => sum + project.budget_labor + project.budget_travel + project.budget_other, 0),
+          monthIncome, monthExpense, activeProjectCount: projects.filter((project) => project.status === 'in_progress').length,
+          statusCounts,
+          monthHours: timesheets.filter((entry) => entry.date.slice(0, 7) === nowMonth).reduce((sum, entry) => sum + entry.hours, 0),
+          totalHours: timesheets.reduce((sum, entry) => sum + entry.hours, 0),
+        },
+      });
+      return true;
+    }
+
+    if (pathname === '/api/page-data' && method === 'GET') {
+      sendJson(res, 200, buildBootstrap(user));
       return true;
     }
 

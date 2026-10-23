@@ -1,6 +1,7 @@
 import type {
   AttachmentCategory,
   AuditLogPage,
+  DashboardData,
   BootstrapData,
   PaginatedProjects,
   PaginatedTransactions,
@@ -33,6 +34,12 @@ function data(): BootstrapData {
 
 export async function loadBootstrap(): Promise<BootstrapData> {
   const result = await apiRequest<BootstrapData>('/api/bootstrap');
+  cache = result;
+  return result;
+}
+
+export async function loadPageData(): Promise<BootstrapData> {
+  const result = await apiRequest<BootstrapData>('/api/page-data');
   cache = result;
   return result;
 }
@@ -540,6 +547,10 @@ export async function restoreCostSheetVersion(projectId: string, version: number
   const index = store.projects.findIndex((project) => project.id === projectId);
   if (index !== -1) store.projects[index] = result;
   return result;
+}
+
+export async function getDashboardData(): Promise<DashboardData> {
+  return apiRequest<DashboardData>('/api/dashboard');
 }
 
 // ===== Paginated lists =====
