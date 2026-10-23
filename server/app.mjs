@@ -1177,6 +1177,43 @@ export function createApp({
       return true;
     }
 
+    match = pathname.match(/^\/api\/projects\/([^/]+)\/detail$/);
+    if (match && method === 'GET') {
+      const projectId = match[1];
+      const project = projectWithManager(projectId);
+      if (user.role === 'employee') ensureProjectAccess(user, projectId);
+      const canManage = user.role === 'admin'
+        || (user.role === 'manager' && project.manager_user_id === user.id);
+      const canViewDetails = canManage || user.role === 'employee';
+      if (!canViewDetails) {
+        sendJson(res, 200, {
+          project,
+          transactions: [], assignments: [], timesheets: [], invoicePlans: [], attachments: [],
+          canManage: false, canViewDetails: false,
+        });
+        return true;
+      }
+      let visibleProject = project;
+      if (user.role === 'employee') {
+        visibleProject = { ...project, budget_labor: 0, budget_travel: 0, budget_other: 0, revenue: 0, cost_sheet: null };
+      }
+      const transactions = db.prepare(
+        'SELECT * FROM transactions WHERE project_id = ? AND deleted_at IS NULL ORDER BY transaction_date DESC, created_at DESC'
+      ).all(projectId);
+      const assignments = db.prepare('SELECT * FROM project_assignments WHERE project_id = ?').all(projectId);
+      const timesheets = user.role === 'employee'
+        ? db.prepare('SELECT * FROM timesheets WHERE project_id = ? AND person_id = ? ORDER BY date DESC').all(projectId, user.person_id)
+        : db.prepare('SELECT * FROM timesheets WHERE project_id = ? ORDER BY date DESC').all(projectId);
+      const invoicePlans = db.prepare('SELECT * FROM invoice_plans WHERE project_id = ? ORDER BY date ASC').all(projectId);
+      const attachments = db.prepare('SELECT * FROM attachments WHERE project_id = ? ORDER BY created_at DESC').all(projectId).map(mapAttachment);
+      sendJson(res, 200, {
+        project: visibleProject,
+        transactions, assignments, timesheets, invoicePlans, attachments,
+        canManage, canViewDetails: true,
+      });
+      return true;
+    }
+
     match = pathname.match(/^\/api\/projects\/([^/]+)\/cost-sheet-versions$/);
     if (match && method === 'GET') {
       const projectId = match[1];

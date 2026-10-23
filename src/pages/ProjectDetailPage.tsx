@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, Button, Badge, EmptyState, StatCard, Modal, Input } from '@/components/ui';
 import {
   formatCurrency, formatCurrencyDetailed, formatDate, formatHours,
@@ -14,12 +14,10 @@ import {
   type TimesheetEntry, type InvoicePlan, type ProjectAttachment, type InvoiceStatus, type CostSheetVersionSummary, type CostSheetVersionDetail,
 } from '@/types';
 import {
-  getProjectById, getTransactionsByProject,
-  getAssignmentsByProject, createAssignment, updateAssignment, deleteAssignment,
-  getTimesheetsByProject, getProjectActualHours, getProjectPlannedHours,
+  getProjectDetail, createAssignment, updateAssignment, deleteAssignment,
   getPersons,
-  getInvoicePlansByProject, getInvoicePlanTotalPercentage, createInvoicePlan, deleteInvoicePlan, updateInvoicePlan,
-  getAttachmentsByProject, createAttachment, deleteAttachment, getAttachmentDownloadUrl, getCostSheetVersions,
+  createInvoicePlan, deleteInvoicePlan, updateInvoicePlan,
+  createAttachment, deleteAttachment, getAttachmentDownloadUrl, getCostSheetVersions,
   getCostSheetVersion, restoreCostSheetVersion,
 } from '@/lib/storage';
 import { useAuth } from '@/context/auth-context';
@@ -42,12 +40,14 @@ export default function ProjectDetailPage({
 }) {
   const { user } = useAuth();
 
-  const [project, setProject] = useState<Project | null>(getProjectById(projectId));
-  const [assignments, setAssignments] = useState<ProjectAssignment[]>(getAssignmentsByProject(projectId));
-  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>(getTimesheetsByProject(projectId));
-  const [transactions, setTransactions] = useState<Transaction[]>(getTransactionsByProject(projectId));
-  const [invoicePlans, setInvoicePlans] = useState<InvoicePlan[]>(getInvoicePlansByProject(projectId));
-  const [attachments, setAttachments] = useState<ProjectAttachment[]>(getAttachmentsByProject(projectId));
+  const [project, setProject] = useState<Project | null>(null);
+  const [assignments, setAssignments] = useState<ProjectAssignment[]>([]);
+  const [timesheets, setTimesheets] = useState<TimesheetEntry[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [invoicePlans, setInvoicePlans] = useState<InvoicePlan[]>([]);
+  const [attachments, setAttachments] = useState<ProjectAttachment[]>([]);
+  const [detailLoading, setDetailLoading] = useState(true);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const persons = getPersons();
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
@@ -75,12 +75,32 @@ export default function ProjectDetailPage({
   const completeDocumentCount = documentChecklist.filter((item) => item.count > 0).length;
 
   function reload() {
-    setProject(getProjectById(projectId));
-    setAssignments(getAssignmentsByProject(projectId));
-    setTimesheets(getTimesheetsByProject(projectId));
-    setTransactions(getTransactionsByProject(projectId));
-    setInvoicePlans(getInvoicePlansByProject(projectId));
-    setAttachments(getAttachmentsByProject(projectId));
+    setDetailLoading(true);
+    setDetailError(null);
+    getProjectDetail(projectId)
+      .then((data) => {
+        setProject(data.project);
+        setAssignments(data.assignments);
+        setTimesheets(data.timesheets);
+        setTransactions(data.transactions);
+        setInvoicePlans(data.invoicePlans);
+        setAttachments(data.attachments);
+      })
+      .catch(() => setDetailError('项目详情加载失败，请稍后重试。'))
+      .finally(() => setDetailLoading(false));
+  }
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  if (detailLoading && !project) {
+    return <div className="py-24 text-center text-sm text-slate-500">正在加载项目详情…</div>;
+  }
+
+  if (detailError && !project) {
+    return <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{detailError}</div>;
   }
 
   if (!project) {
@@ -172,10 +192,10 @@ export default function ProjectDetailPage({
   const budgetUsed = financials.budgetUsed;
   const txIncome = financials.actualIncome;
   const txExpense = financials.actualExpense;
-  const plannedHours = getProjectPlannedHours(projectId);
-  const actualHours = getProjectActualHours(projectId);
+  const plannedHours = assignments.reduce((sum, assignment) => sum + assignment.planned_hours, 0);
+  const actualHours = timesheets.reduce((sum, entry) => sum + entry.hours, 0);
   const hoursUsed = plannedHours > 0 ? (actualHours / plannedHours) * 100 : 0;
-  const invoiceTotalPct = getInvoicePlanTotalPercentage(projectId);
+  const invoiceTotalPct = invoicePlans.reduce((sum, plan) => sum + plan.percentage, 0);
   const invoiceTotalAmount = invoicePlans.reduce((sum, plan) => sum + (plan.percentage / 100) * project.revenue, 0);
   const invoicePaidTotal = invoicePlans.reduce((sum, plan) => sum + (plan.paid_amount ?? 0), 0);
   const canAddInvoice = invoiceTotalPct < 100;

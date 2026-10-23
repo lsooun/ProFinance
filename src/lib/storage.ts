@@ -2,6 +2,7 @@ import type {
   AttachmentCategory,
   AuditLogPage,
   DashboardData,
+  ProjectDetailData,
   BootstrapData,
   PaginatedProjects,
   PaginatedTransactions,
@@ -12,6 +13,7 @@ import type {
   ManagerOption,
   Person,
   Project,
+  ProjectOption,
   RecycleBinPage,
   RecycleProjectItem,
   RecycleTransactionItem,
@@ -133,6 +135,10 @@ export async function deleteUser(id: string): Promise<boolean> {
       : project,
   );
   return true;
+}
+
+export function getProjectOptions(): ProjectOption[] {
+  return [...data().projectOptions];
 }
 
 export function getManagerOptions(): ManagerOption[] {
@@ -547,6 +553,10 @@ export async function restoreCostSheetVersion(projectId: string, version: number
   const index = store.projects.findIndex((project) => project.id === projectId);
   if (index !== -1) store.projects[index] = result;
   return result;
+}
+
+export async function getProjectDetail(projectId: string): Promise<ProjectDetailData> {
+  return apiRequest<ProjectDetailData>(`/api/projects/${encodeURIComponent(projectId)}/detail`);
 }
 
 export async function getDashboardData(): Promise<DashboardData> {

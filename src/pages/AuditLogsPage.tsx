@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Badge, Button, Card, EmptyState, Modal, Select } from '@/components/ui';
-import { getAuditLogs, getProjects } from '@/lib/storage';
+import { getAuditLogs, getProjectOptions } from '@/lib/storage';
 import { formatDate } from '@/lib/format';
 import type { AuditLogEntry, AuditLogPage } from '@/types';
 import { ChevronLeft, ChevronRight, Eye, History, RefreshCw, Search, ShieldCheck } from 'lucide-react';
@@ -78,7 +78,7 @@ export default function AuditLogsPage() {
   const [projectId, setProjectId] = useState('');
   const [selected, setSelected] = useState<AuditLogEntry | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const projects = getProjects();
+  const projects = getProjectOptions();
 
   useEffect(() => {
     let active = true;

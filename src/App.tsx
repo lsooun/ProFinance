@@ -30,7 +30,11 @@ function AppContent() {
 
   useEffect(() => {
     if (!profile) return;
-    if (route.page === 'dashboard') {
+    if (route.page === 'dashboard'
+      || route.page === 'users'
+      || route.page === 'audit'
+      || route.page === 'recycle'
+      || (route.page === 'projects' && route.projectId)) {
       setPageDataLoading(false);
       setPageDataError(null);
       return;

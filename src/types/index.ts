@@ -112,6 +112,17 @@ export interface CostSheetVersionSummary {
   approved_by_name: string | null;
 }
 
+export interface ProjectDetailData {
+  project: Project;
+  transactions: Transaction[];
+  assignments: ProjectAssignment[];
+  timesheets: TimesheetEntry[];
+  invoicePlans: InvoicePlan[];
+  attachments: ProjectAttachment[];
+  canManage: boolean;
+  canViewDetails: boolean;
+}
+
 export interface DashboardData {
   projects: Project[];
   transactions: Transaction[];
@@ -462,6 +473,7 @@ export interface BootstrapData {
   attachments: ProjectAttachment[];
   users: UserAccount[];
   managerOptions: ManagerOption[];
+  projectOptions: ProjectOption[];
   permissions: {
     canManage: boolean;
     isAdmin: boolean;
