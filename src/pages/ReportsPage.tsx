@@ -50,11 +50,11 @@ export default function ReportsPage() {
 
   useEffect(() => {
     let active = true;
-    getReportData()
+    getReportData({ year: selectedYear, month: selectedMonth, yearly: reportType === 'yearly' })
       .then((result) => { if (active) setData(result); })
       .catch(() => { if (active) setLoadError('报表加载失败，请稍后重试。'); });
     return () => { active = false; };
-  }, []);
+  }, [selectedYear, selectedMonth, reportType]);
 
   if (loadError) {
     return <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{loadError}</div>;
@@ -76,8 +76,8 @@ export default function ReportsPage() {
   }
 
   const periodTx = transactions.filter((tx) => inPeriod(tx.transaction_date));
-  const totalIncome = periodTx.filter((tx) => tx.type === 'income').reduce((sum, tx) => sum + tx.amount, 0);
-  const totalExpense = periodTx.filter((tx) => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
+  const totalIncome = data.summary.totalIncome;
+  const totalExpense = data.summary.totalExpense;
   const netProfit = totalIncome - totalExpense;
 
   const monthlyData = MONTH_NAMES.map((_, month) => {

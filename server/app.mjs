@@ -887,7 +887,20 @@ export function createApp({
         ...timesheets.map((row) => new Date(row.date).getFullYear()),
         ...invoicePlans.map((row) => new Date(row.date).getFullYear()),
       ])].filter((year) => Number.isFinite(year)).sort((a, b) => b - a);
-      sendJson(res, 200, { projects, persons, transactions, timesheets, invoicePlans, years });
+      const urlObj = new URL(req.url, 'http://localhost');
+      const selectedYear = Number.parseInt(urlObj.searchParams.get('year') || String(new Date().getFullYear()), 10);
+      const selectedMonth = Number.parseInt(urlObj.searchParams.get('month') || String(new Date().getMonth()), 10);
+      const yearly = urlObj.searchParams.get('mode') === 'yearly';
+      const periodTransactions = transactions.filter((row) => {
+        const date = new Date(row.transaction_date);
+        if (date.getFullYear() !== selectedYear) return false;
+        return yearly || date.getMonth() === selectedMonth;
+      });
+      const summary = {
+        totalIncome: periodTransactions.filter((row) => row.type === 'income').reduce((sum, row) => sum + row.amount, 0),
+        totalExpense: periodTransactions.filter((row) => row.type === 'expense').reduce((sum, row) => sum + row.amount, 0),
+      };
+      sendJson(res, 200, { projects, persons, transactions, timesheets, invoicePlans, years, summary });
       return true;
     }
 

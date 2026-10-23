@@ -119,6 +119,7 @@ export interface ReportData {
   timesheets: TimesheetEntry[];
   invoicePlans: InvoicePlan[];
   years: number[];
+  summary: { totalIncome: number; totalExpense: number };
 }
 
 export interface PersonnelData {

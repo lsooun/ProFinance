@@ -1076,3 +1076,23 @@ test('轻量 bootstrap 不携带业务数据，按需页面接口才加载', asy
   assert.ok(full.data.projects.length >= 1);
   assert.ok(full.data.persons.length >= 1);
 });
+
+test('按需数据接口可独立加载项目详情、人员和报表', async () => {
+  const list = await api('/api/projects?page_size=1', { cookie: managerCookie });
+  assert.equal(list.status, 200);
+  const projectId = list.data.items[0].id;
+  const detail = await api(`/api/projects/${projectId}/detail`, { cookie: managerCookie });
+  assert.equal(detail.status, 200);
+  assert.equal(detail.data.project.id, projectId);
+  assert.ok(Array.isArray(detail.data.transactions));
+
+  const personnel = await api('/api/personnel', { cookie: managerCookie });
+  assert.equal(personnel.status, 200);
+  assert.ok(Array.isArray(personnel.data.persons));
+  assert.ok(Array.isArray(personnel.data.assignments));
+
+  const reports = await api('/api/reports?year=2026&month=9&mode=monthly', { cookie: adminCookie });
+  assert.equal(reports.status, 200);
+  assert.ok(Array.isArray(reports.data.transactions));
+  assert.ok(reports.data.summary.totalIncome >= 0);
+});

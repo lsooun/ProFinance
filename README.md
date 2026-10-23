@@ -112,7 +112,8 @@ Cost Sheet 明细保存在独立的 `project_cost_sheet_versions` 表中，不�
 - 仪表盘使用 `/api/dashboard` 服务端聚合数据和最近记录
 - 项目、收支、工时、审计列表使用各自的分页接口
 - 项目详情使用 `/api/projects/:id/detail` 只加载当前项目
-- 人员、报表使用独立页面接口
+- 人员使用 `/api/personnel`，报表使用 `/api/reports`
+- 报表财务汇总由服务端按所选期间聚合
 - 前端不再在登录后统一加载全量业务数据
 
 ### 数据库迁移

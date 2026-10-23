@@ -555,8 +555,11 @@ export async function getInvoicePlansForProject(projectId: string): Promise<Invo
   return apiRequest<InvoicePlan[]>(`/api/projects/${encodeURIComponent(projectId)}/invoice-plans`);
 }
 
-export async function getReportData(): Promise<ReportData> {
-  return apiRequest<ReportData>('/api/reports');
+export async function getReportData(params: { year: number; month: number; yearly: boolean }): Promise<ReportData> {
+  const query = new URLSearchParams({
+    year: String(params.year), month: String(params.month), mode: params.yearly ? 'yearly' : 'monthly',
+  });
+  return apiRequest<ReportData>(`/api/reports?${query.toString()}`);
 }
 
 export async function getPersonnelData(): Promise<PersonnelData> {
