@@ -163,8 +163,10 @@ Playwright 测试覆盖登录、工时整数校验、Cost Sheet 版本历史/恢
 
 ## Docker 部署
 
-项目已包含 `Dockerfile`、`docker-compose.yml`、Caddy 反向代理配置和持久卷。  
+项目已包含 `Dockerfile`、`docker-compose.yml`、可选的 Caddy 反向代理配置和持久卷。  
 **不需要在宿主机安装 SQLite**，Node 镜像已内置 `node:sqlite`。
+
+> **当前生产访问方式**：直接使用 `http://47.93.85.18:18099/`，Caddy 已停止，`PF_SECURE_COOKIE=0`，应用绑定 `0.0.0.0:18099`。这是明文 HTTP，登录密码和业务数据会经过公网明文传输，仅建议临时使用；长期使用请恢复 HTTPS 或限制来源 IP/VPN。
 
 ### 方式一：本机/内网快速运行
 
@@ -178,7 +180,21 @@ curl http://127.0.0.1:8787/api/health
 - 数据保存在命名卷 `profinance-data` 中（数据库 + 附件）。
 - 默认 `PF_SECURE_COOKIE=0`，适合本地 HTTP 测试；公网 HTTPS 部署请设为 `1`。
 
-### 方式二：生产环境 + Caddy 自动 HTTPS
+### 方式二：直接 IP + 端口（当前生产）
+
+```dotenv
+APP_BIND=0.0.0.0
+APP_PORT=18099
+PF_SECURE_COOKIE=0
+```
+
+```bash
+docker compose --env-file deploy/production.env up -d app
+```
+
+访问：<http://47.93.85.18:18099/>。此方式不使用 Caddy，也不使用 `sslip.io` 域名；云安全组需要放行 `18099`。
+
+### 方式三：生产环境 + Caddy 自动 HTTPS
 
 1. 将域名 DNS 解析到服务器公网 IP，放行 `80/443` 端口。
 2. 准备配置：
@@ -331,7 +347,7 @@ src/
 - 会话使用 HttpOnly + SameSite=Lax Cookie，前端无法读取。
 - 所有写操作在服务端做角色校验；员工访问非分配项目、他人工时、财务数据都会被拒绝。
 - 附件支持 `.xlsx/.xls/.doc/.docx/.pdf`，单文件 10 MB，文件保存在磁盘上。
-- 本地 HTTP 环境未启用 `Secure` Cookie；上线请使用 HTTPS 并设置 `PF_SECURE_COOKIE=1`。
-- Docker 镜像以非 root 用户运行，应用端口仅绑定宿主机回环地址，由 Caddy/Nginx 对外提供 HTTPS；建议再加限流、防火墙和定期备份。
+- 当前生产使用直接 HTTP，`PF_SECURE_COOKIE=0`；这会使登录密码和业务数据以明文经过公网，建议临时使用并尽快恢复 HTTPS，或通过云防火墙/VPN 限制来源。
+- Docker 镜像以非 root 用户运行；使用 Caddy 时应用仅绑定宿主机回环地址，直接 IP 访问时绑定 `0.0.0.0:18099`。建议再加限流、云防火墙和定期备份。
 - SQLite 适合单实例部署；如需多副本横向扩容，应迁移到 PostgreSQL 等网络数据库。
 
