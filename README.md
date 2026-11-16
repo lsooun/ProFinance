@@ -161,6 +161,12 @@ npm run check     # typecheck + lint + 后端测试 + 生产构建
 
 Playwright 测试覆盖登录、工时整数校验、Cost Sheet 版本历史/恢复和审计日志页面。CI 配置位于 `.gitea/workflows/ci.yml`，当前未接入 Runner，接入后会自动执行检查并运行 Chromium E2E。
 
+## Kubernetes 部署
+
+仓库新增了 [deploy/k8s](deploy/k8s/) 清单，支持单副本 Deployment、RWO PVC、ConfigMap、探针和 `externalIPs: 47.93.85.18:18099` 直连。
+
+K8s 版本必须保持 **1 个副本**，因为 SQLite 和本地附件目录只允许单写入者。详细镜像导入、部署和备份注意事项见 [deploy/k8s/README.md](deploy/k8s/README.md)。
+
 ## Docker 部署
 
 项目已包含 `Dockerfile`、`docker-compose.yml`、可选的 Caddy 反向代理配置和持久卷。  

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: profinance-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # 使用集群默认 StorageClass；如果集群没有默认存储类，取消注释并填写实际名称
+  # storageClassName: local-path

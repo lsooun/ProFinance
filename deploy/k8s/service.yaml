@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: profinance
+  labels:
+    app: profinance
+spec:
+  # 通过节点公网 IP + 18099 访问；如果集群不支持 externalIPs，
+  # 改为 type: NodePort，并使用 30000-32767 范围内的端口。
+  type: ClusterIP
+  externalIPs:
+    - 47.93.85.18
+  selector:
+    app: profinance
+  ports:
+    - name: http
+      port: 18099
+      targetPort: http
+      protocol: TCP

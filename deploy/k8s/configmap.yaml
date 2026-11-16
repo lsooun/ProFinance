@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: profinance-config
+data:
+  PF_HOST: "0.0.0.0"
+  PF_PORT: "8787"
+  PF_DB_PATH: "/app/data/profinance.db"
+  PF_UPLOAD_DIR: "/app/data/uploads"
+  # HTTP 直连必须为 0；如果前面有 HTTPS Ingress，改为 1
+  PF_SECURE_COOKIE: "0"
