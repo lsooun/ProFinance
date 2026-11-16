@@ -163,7 +163,7 @@ Playwright 测试覆盖登录、工时整数校验、Cost Sheet 版本历史/恢
 
 ## Kubernetes 部署
 
-仓库新增了 [deploy/k8s](deploy/k8s/) 清单，支持单副本 Deployment、RWO PVC、ConfigMap、探针和 `externalIPs: 47.93.85.18:18099` 直连。
+仓库新增了 [deploy/k8s](deploy/k8s/) 清单，支持单副本 Deployment、RWO PVC、ConfigMap、探针和 NodePort `18099` 直连。
 
 K8s 版本必须保持 **1 个副本**，因为 SQLite 和本地附件目录只允许单写入者。详细镜像导入、部署和备份注意事项见 [deploy/k8s/README.md](deploy/k8s/README.md)。
 
@@ -172,7 +172,7 @@ K8s 版本必须保持 **1 个副本**，因为 SQLite 和本地附件目录只�
 项目已包含 `Dockerfile`、`docker-compose.yml`、可选的 Caddy 反向代理配置和持久卷。  
 **不需要在宿主机安装 SQLite**，Node 镜像已内置 `node:sqlite`。
 
-> **当前生产访问方式**：直接使用 `http://47.93.85.18:18099/`，Caddy 已停止，`PF_SECURE_COOKIE=0`，应用绑定 `0.0.0.0:18099`。这是明文 HTTP，登录密码和业务数据会经过公网明文传输，仅建议临时使用；长期使用请恢复 HTTPS 或限制来源 IP/VPN。
+> **当前生产访问方式**：Kubernetes NodePort `http://47.93.85.18:18099/`，命名空间 `profinance`，Caddy 未使用，`PF_SECURE_COOKIE=0`。这是明文 HTTP，登录密码和业务数据会经过公网明文传输，仅建议临时使用；长期使用请接入 HTTPS Ingress 或限制来源 IP/VPN。
 
 ### 方式一：本机/内网快速运行
 
@@ -354,6 +354,6 @@ src/
 - 所有写操作在服务端做角色校验；员工访问非分配项目、他人工时、财务数据都会被拒绝。
 - 附件支持 `.xlsx/.xls/.doc/.docx/.pdf`，单文件 10 MB，文件保存在磁盘上。
 - 当前生产使用直接 HTTP，`PF_SECURE_COOKIE=0`；这会使登录密码和业务数据以明文经过公网，建议临时使用并尽快恢复 HTTPS，或通过云防火墙/VPN 限制来源。
-- Docker 镜像以非 root 用户运行；使用 Caddy 时应用仅绑定宿主机回环地址，直接 IP 访问时绑定 `0.0.0.0:18099`。建议再加限流、云防火墙和定期备份。
+- 当前 K8s 部署使用单副本 NodePort `18099`，SQLite 和附件存放在 `profinance-data` PVC；不要扩成多副本。建议再加限流、云防火墙和定期备份。
 - SQLite 适合单实例部署；如需多副本横向扩容，应迁移到 PostgreSQL 等网络数据库。
 

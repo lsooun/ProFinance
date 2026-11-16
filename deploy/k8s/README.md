@@ -7,7 +7,7 @@
 - 集群已有默认 StorageClass，或修改 `pvc.yaml` 的 `storageClassName`
 - 已安装 `kubectl`
 - 节点公网 IP 为 `47.93.85.18`，云安全组/防火墙放行 `18099`
-- 当前 `service.yaml` 使用 `externalIPs` 暴露 `18099`；如果集群禁止 externalIPs，改用 NodePort 或 Ingress
+- 当前 `service.yaml` 使用 NodePort 暴露 `18099`；该集群的 service-node-port-range 为 80-60000
 
 ## 构建和导入镜像
 

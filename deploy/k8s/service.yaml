@@ -5,15 +5,14 @@ metadata:
   labels:
     app: profinance
 spec:
-  # 通过节点公网 IP + 18099 访问；如果集群不支持 externalIPs，
-  # 改为 type: NodePort，并使用 30000-32767 范围内的端口。
-  type: ClusterIP
-  externalIPs:
-    - 47.93.85.18
+  # 当前集群的 service-node-port-range 为 80-60000，因此可直接使用 18099。
+  # 公网 NAT 转发到节点内网 IP 时，NodePort 能正确暴露；externalIPs 不行。
+  type: NodePort
   selector:
     app: profinance
   ports:
     - name: http
       port: 18099
       targetPort: http
+      nodePort: 18099
       protocol: TCP
